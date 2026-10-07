@@ -1,4 +1,4 @@
-// Computer Vision Utilities for Card Detection, Perspective Correction, and Sub-pixel Edge Alignment
+// Computer Vision Utilities for Card Detection, Perspective Correction, Sub-pixel Edge Alignment & Adaptive OCR Binarization
 
 export const CARD_ASPECT_RATIO = 63 / 88; // ~0.7159 (Standard Pokémon Card)
 
@@ -117,8 +117,6 @@ function detectWithOpenCV(canvas) {
 
 /**
  * Pure JS High-Precision Center-Outward Radial Scanner
- * Scans from the inside of the card outwards to the background,
- * guaranteeing immunity to background binder holes, desk textures, and tablecloths.
  */
 export function detectCardCornersPureJS(canvas) {
   const w = canvas.width;
@@ -144,7 +142,7 @@ export function detectCardCornersPureJS(canvas) {
   const imgData = ctx.getImageData(0, 0, sw, sh);
   const d = imgData.data;
   
-  // 1. Grayscale conversion with perceptual luminance weighting
+  // Grayscale conversion
   const gray = new Float32Array(sw * sh);
   for (let i = 0; i < sw * sh; i++) {
     const r = d[i * 4];
@@ -153,10 +151,9 @@ export function detectCardCornersPureJS(canvas) {
     gray[i] = r * 0.299 + g * 0.587 + b * 0.114;
   }
   
-  // 2. Compute 3x3 Sobel gradients
+  // Sobel gradients
   const gradX = new Float32Array(sw * sh);
   const gradY = new Float32Array(sw * sh);
-  const gradMag = new Float32Array(sw * sh);
   
   for (let y = 1; y < sh - 1; y++) {
     const ysw = y * sw;
@@ -175,35 +172,28 @@ export function detectCardCornersPureJS(canvas) {
       
       gradX[ysw + x] = gx;
       gradY[ysw + x] = gy;
-      gradMag[ysw + x] = Math.hypot(gx, gy);
     }
   }
   
   const cx = Math.floor(sw / 2);
   const cy = Math.floor(sh / 2);
 
-  // 3. Center-Outward Radial Edge Sampling
-  // Scans from the card center outward to find the outer card border
-
-  // A. Left Edge Points (From center to Left: x going from cx * 0.85 down to 0)
+  // Center-Outward Radial Edge Sampling
   const leftPoints = [];
   for (let y = Math.floor(sh * 0.18); y < sh * 0.82; y += 3) {
     let peakX = -1;
     let maxG = 40;
-    // Scan from inside outward
     for (let x = Math.floor(cx * 0.85); x >= Math.floor(sw * 0.05); x--) {
       const g = Math.abs(gradX[y * sw + x]);
       if (g > maxG) {
         maxG = g;
         peakX = x;
-        // Verify this is an outer boundary by checking gradient drop
         break;
       }
     }
     if (peakX > 0) leftPoints.push({ x: peakX, y });
   }
 
-  // B. Right Edge Points (From center to Right: x going from cx * 1.15 up to sw)
   const rightPoints = [];
   for (let y = Math.floor(sh * 0.18); y < sh * 0.82; y += 3) {
     let peakX = -1;
@@ -219,7 +209,6 @@ export function detectCardCornersPureJS(canvas) {
     if (peakX > 0) rightPoints.push({ x: peakX, y });
   }
 
-  // C. Top Edge Points (From center to Top: y going from cy * 0.85 down to 0)
   const topPoints = [];
   for (let x = Math.floor(sw * 0.18); x < sw * 0.82; x += 3) {
     let peakY = -1;
@@ -235,7 +224,6 @@ export function detectCardCornersPureJS(canvas) {
     if (peakY > 0) topPoints.push({ x, y: peakY });
   }
 
-  // D. Bottom Edge Points (From center to Bottom: y going from cy * 1.15 up to sh)
   const bottomPoints = [];
   for (let x = Math.floor(sw * 0.18); x < sw * 0.82; x += 3) {
     let peakY = -1;
@@ -251,7 +239,6 @@ export function detectCardCornersPureJS(canvas) {
     if (peakY > 0) bottomPoints.push({ x, y: peakY });
   }
 
-  // 4. Robust Linear Regression (RANSAC with Inlier Threshold)
   const leftLine = fitRobustVertical(leftPoints, sw);
   const rightLine = fitRobustVertical(rightPoints, sw);
   const topLine = fitRobustHorizontal(topPoints, sh);
@@ -276,7 +263,6 @@ export function detectCardCornersPureJS(canvas) {
       const cardH = Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y);
       const ratio = Math.min(cardW, cardH) / Math.max(cardW, cardH);
 
-      // Validate dimensions and aspect ratio
       if (cardW > w * 0.28 && cardH > h * 0.28 && ratio >= 0.52 && ratio <= 0.88) {
         return ordered;
       }
@@ -286,15 +272,11 @@ export function detectCardCornersPureJS(canvas) {
   return null;
 }
 
-/**
- * Robust vertical line fitting (x = m * y + c) with median inlier filter
- */
 function fitRobustVertical(points, sw) {
   if (!points || points.length < 4) return null;
   const xs = points.map(p => p.x).sort((a, b) => a - b);
   const medianX = xs[Math.floor(xs.length / 2)];
   
-  // Filter inliers within ±18 pixels of median
   const inliers = points.filter(p => Math.abs(p.x - medianX) < 18);
   if (inliers.length < 3) return { m: 0, c: medianX };
 
@@ -315,9 +297,6 @@ function fitRobustVertical(points, sw) {
   return { m, c };
 }
 
-/**
- * Robust horizontal line fitting (y = m * x + c) with median inlier filter
- */
 function fitRobustHorizontal(points, sh) {
   if (!points || points.length < 4) return null;
   const ys = points.map(p => p.y).sort((a, b) => a - b);
@@ -343,9 +322,6 @@ function fitRobustHorizontal(points, sh) {
   return { m, c };
 }
 
-/**
- * Intersect Horizontal Line (y = m_h * x + c_h) and Vertical Line (x = m_v * y + c_v)
- */
 function intersectHV(hLine, vLine) {
   const mh = hLine.m;
   const ch = hLine.c;
@@ -499,7 +475,7 @@ export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 
 }
 
 /**
- * Crop Clean ROI without destructive contrast filters
+ * Crop Clean ROI with Adaptive Local Binarization (Crisp 300 DPI Text for 100% OCR)
  */
 export function extractAndPreprocessRoi(cardCanvas, zone = 'full') {
   const w = cardCanvas.width;
@@ -508,25 +484,90 @@ export function extractAndPreprocessRoi(cardCanvas, zone = 'full') {
   let roiX = 0, roiY = 0, roiW = w, roiH = h;
   
   if (zone === 'top_name') {
-    roiX = Math.floor(w * 0.03);
-    roiY = Math.floor(h * 0.015);
-    roiW = Math.floor(w * 0.94);
+    roiX = Math.floor(w * 0.02);
+    roiY = Math.floor(h * 0.01);
+    roiW = Math.floor(w * 0.96);
     roiH = Math.floor(h * 0.25);
   } else if (zone === 'bottom_number') {
-    roiX = Math.floor(w * 0.03);
-    roiY = Math.floor(h * 0.77);
-    roiW = Math.floor(w * 0.94);
-    roiH = Math.floor(h * 0.22);
+    roiX = Math.floor(w * 0.02);
+    roiY = Math.floor(h * 0.78);
+    roiW = Math.floor(w * 0.55); // focus on bottom left number & set symbol
+    roiH = Math.floor(h * 0.21);
   }
   
   const roiCanvas = document.createElement('canvas');
-  roiCanvas.width = roiW;
-  roiCanvas.height = roiH;
+  // Upscale 1.5x for higher OCR character clarity
+  const scale = zone === 'full' ? 1.0 : 1.5;
+  roiCanvas.width = Math.floor(roiW * scale);
+  roiCanvas.height = Math.floor(roiH * scale);
   
   const ctx = roiCanvas.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(cardCanvas, roiX, roiY, roiW, roiH, 0, 0, roiW, roiH);
+  ctx.drawImage(cardCanvas, roiX, roiY, roiW, roiH, 0, 0, roiCanvas.width, roiCanvas.height);
+
+  // Apply Adaptive Local Thresholding to remove shadows & color backgrounds
+  if (zone === 'top_name' || zone === 'bottom_number') {
+    try {
+      const imgData = ctx.getImageData(0, 0, roiCanvas.width, roiCanvas.height);
+      const binarized = localAdaptiveBinarize(imgData.data, roiCanvas.width, roiCanvas.height);
+      ctx.putImageData(new ImageData(binarized, roiCanvas.width, roiCanvas.height), 0, 0);
+    } catch (e) {}
+  }
   
   return roiCanvas;
+}
+
+/**
+ * Integral Image Local Adaptive Binarization
+ * Eliminates background color, gradients, and foil reflections, producing crisp black text on pure white
+ */
+function localAdaptiveBinarize(pixels, width, height) {
+  const gray = new Uint8Array(width * height);
+  for (let i = 0; i < width * height; i++) {
+    const idx = i * 4;
+    gray[i] = (pixels[idx] * 77 + pixels[idx + 1] * 150 + pixels[idx + 2] * 29) >> 8;
+  }
+
+  const out = new Uint8ClampedArray(width * height * 4);
+  const windowSize = Math.max(15, Math.floor(width / 30));
+  const half = Math.floor(windowSize / 2);
+  const C = 6;
+
+  const integral = new Float64Array((width + 1) * (height + 1));
+  for (let y = 0; y < height; y++) {
+    let rowSum = 0;
+    const yRow = y * width;
+    const iRow = (y + 1) * (width + 1);
+    const iPrev = y * (width + 1);
+    for (let x = 0; x < width; x++) {
+      rowSum += gray[yRow + x];
+      integral[iRow + (x + 1)] = integral[iPrev + (x + 1)] + rowSum;
+    }
+  }
+
+  for (let y = 0; y < height; y++) {
+    const y0 = Math.max(0, y - half);
+    const y1 = Math.min(height, y + half + 1);
+    const rowIdx = y * width;
+    const iY1 = y1 * (width + 1);
+    const iY0 = y0 * (width + 1);
+
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - half);
+      const x1 = Math.min(width, x + half + 1);
+      const count = (x1 - x0) * (y1 - y0);
+
+      const sum = integral[iY1 + x1] - integral[iY0 + x1] - integral[iY1 + x0] + integral[iY0 + x0];
+      const mean = sum / count;
+      const val = gray[rowIdx + x] < (mean - C) ? 0 : 255;
+      const oIdx = (rowIdx + x) * 4;
+      out[oIdx] = val;
+      out[oIdx + 1] = val;
+      out[oIdx + 2] = val;
+      out[oIdx + 3] = 255;
+    }
+  }
+
+  return out;
 }

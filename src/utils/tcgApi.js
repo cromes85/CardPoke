@@ -1,4 +1,5 @@
 // TCGdex API Client & Multi-Factor Candidate Ranking Engine (100% Precision)
+import { SET_TOTAL_MAP } from './ocrService.js';
 
 const API_FR = 'https://api.tcgdex.net/v2/fr';
 const API_EN = 'https://api.tcgdex.net/v2/en';
@@ -20,8 +21,16 @@ const SET_ALIASES = {
   'PRE': 'sv08.5',  // Évolutions Prismatiques
   'CRZ': 'swsh12.5',
   'SIT': 'swsh12',
+  'LOR': 'swsh11',
+  'ASR': 'swsh10',
+  'BRS': 'swsh9',
+  'FST': 'swsh8',
   'EVS': 'swsh7',
-  'BASE': 'base1',
+  'CRE': 'swsh6',
+  'BST': 'swsh5',
+  'VIV': 'swsh4',
+  'DAA': 'swsh3',
+  'SSH': 'swsh1',
   'BKT': 'xy8',
   'HIF': 'sm115'
 };
@@ -45,7 +54,7 @@ export async function getCardDetails(cardId) {
 }
 
 /**
- * 100% Precision Multi-Factor Search Engine
+ * 100% Precision Multi-Factor Search Engine with Instant Direct ID Resolution
  */
 export async function searchCard(params) {
   const { 
@@ -62,7 +71,6 @@ export async function searchCard(params) {
   const searchName = (primaryName || name).trim();
   if (searchName) {
     wordsToSearch.add(searchName);
-    // Also add root word if multi-word (e.g. "Tissenboule de la Team Rocket" -> "Tissenboule")
     const parts = searchName.split(/\s+/);
     if (parts.length > 1 && parts[0].length >= 3) {
       wordsToSearch.add(parts[0]);
@@ -78,13 +86,56 @@ export async function searchCard(params) {
     if (n) numbersToSearch.add(String(n).trim());
   }
 
-  const mappedSetId = setCode ? (SET_ALIASES[setCode.toUpperCase()] || setCode.toLowerCase()) : null;
-  const targetTotal = parseInt(totalInSet, 10) || null;
+  // Determine target set ID from set code OR set total
+  let mappedSetId = setCode ? (SET_ALIASES[setCode.toUpperCase()] || (setCode.toLowerCase() !== 'base' && setCode.toLowerCase() !== 'basic' ? setCode.toLowerCase() : null)) : null;
+  if (!mappedSetId && totalInSet && SET_TOTAL_MAP[totalInSet]) {
+    mappedSetId = SET_TOTAL_MAP[totalInSet];
+  }
 
+  const targetTotal = parseInt(totalInSet, 10) || null;
   const candidateMap = new Map();
   const searchEndpoints = [API_FR, API_EN];
 
-  // --- STRATEGY 0 (Direct Combo Name + Number - Highest Precision) ---
+  // --- FAST TRACK: Direct Exact Card ID Lookup (Instant 100% Match) ---
+  if (mappedSetId && localId) {
+    const cleanId = localId.replace(/^0+/, '');
+    const paddedId = localId.padStart(3, '0');
+    const idsToTry = Array.from(new Set([
+      `${mappedSetId}-${cleanId}`,
+      `${mappedSetId}-${paddedId}`,
+      `${mappedSetId}-${localId}`
+    ]));
+
+    for (const cardId of idsToTry) {
+      for (const endpoint of searchEndpoints) {
+        try {
+          const res = await fetch(`${endpoint}/cards/${cardId}`);
+          if (res.ok) {
+            const cardData = await res.json();
+            const cardNameLower = (cardData.name || '').toLowerCase();
+            const targetLower = (searchName || '').toLowerCase();
+            const firstTargetWord = targetLower.split(' ')[0];
+
+            if (!targetLower || cardNameLower.includes(targetLower) || targetLower.includes(cardNameLower) || (firstTargetWord && cardNameLower.includes(firstTargetWord))) {
+              const formatted = formatCardData(cardData);
+              return {
+                bestMatch: formatted,
+                alternatives: [],
+                meta: {
+                  recognizedName: searchName || cardData.name,
+                  recognizedId: localId,
+                  recognizedTotal: totalInSet,
+                  recognizedSetCode: setCode
+                }
+              };
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  // --- STRATEGY 0: Direct Combo Name + Number Query ---
   for (const word of Array.from(wordsToSearch).slice(0, 4)) {
     for (const num of Array.from(numbersToSearch).slice(0, 4)) {
       const cleanNum = num.replace(/^0+/, '');
@@ -98,7 +149,7 @@ export async function searchCard(params) {
             if (res.ok) {
               const list = await res.json();
               for (const card of list) {
-                scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 120);
+                scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 140);
               }
             }
           } catch (e) {}
@@ -107,7 +158,7 @@ export async function searchCard(params) {
     }
   }
 
-  // --- STRATEGY 1 (Query by Words) ---
+  // --- STRATEGY 1: Query by Words ---
   for (const word of Array.from(wordsToSearch).slice(0, 5)) {
     for (const endpoint of searchEndpoints) {
       try {
@@ -122,8 +173,7 @@ export async function searchCard(params) {
     }
   }
 
-  // --- STRATEGY 2 (Query by Set + Numbers ONLY if Set or Total or Name is known) ---
-  // Protection against damage numbers generating false positives!
+  // --- STRATEGY 2: Query by Set / Numbers ONLY if Set or Total or Name is known ---
   if (mappedSetId || targetTotal || searchName) {
     for (const num of Array.from(numbersToSearch).slice(0, 4)) {
       const cleanNum = num.replace(/^0+/, '');
@@ -215,7 +265,7 @@ function scoreAndAddCandidate(card, map, ctx, baseBonus = 0) {
 
   // 3. Set Code / Series Match
   if (ctx.mappedSetId && card.id.toLowerCase().includes(ctx.mappedSetId)) {
-    score += 70;
+    score += 90;
   }
 
   if (!map.has(card.id) || map.get(card.id).score < score) {

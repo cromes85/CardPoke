@@ -341,7 +341,7 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
               <h3 className="text-white font-bold text-xs sm:text-base flex items-center gap-1.5">
                 <span>Cadrage Automatique</span>
                 <span className="text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                  v3.3
+                  v3.4
                 </span>
               </h3>
               <p className="text-[10px] sm:text-[11px] text-slate-400">

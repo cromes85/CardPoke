@@ -74,6 +74,9 @@ export default function App() {
       // 2. Query TCGdex
       const searchResult = await searchCard({
         primaryName: ocrResult.primaryName,
+        hp: ocrResult.hp,
+        detectedCategory: ocrResult.detectedCategory,
+        stage: ocrResult.detectedCategory?.stage,
         candidateWords: ocrResult.candidateWords,
         extractedNumbers: ocrResult.extractedNumbers,
         localId: ocrResult.localId,
@@ -103,10 +106,22 @@ export default function App() {
 
   const handleSelectAlternative = async (cardId) => {
     setIsProcessing(true);
-    const details = await getCardDetails(cardId);
-    setIsProcessing(false);
-    if (details) {
-      setSelectedCard(details);
+    try {
+      const details = await getCardDetails(cardId);
+      setIsProcessing(false);
+      if (details) {
+        setAlternativeMatches(prev => {
+          const filtered = prev.filter(c => c.id !== cardId);
+          if (selectedCard && !filtered.some(c => c.id === selectedCard.id)) {
+            return [selectedCard, ...filtered];
+          }
+          return filtered;
+        });
+        setSelectedCard(details);
+        soundManager.playSuccess();
+      }
+    } catch (e) {
+      setIsProcessing(false);
     }
   };
 

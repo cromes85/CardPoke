@@ -222,23 +222,43 @@ export default function CardResultModal({
               {/* Alternative Cards Quick Carousel */}
               {alternatives && alternatives.length > 0 && (
                 <div className="w-full max-w-[260px] mt-4 space-y-2">
-                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                    Autres versions trouvées ({alternatives.length}) :
-                  </span>
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Autres versions ({alternatives.length}) :
+                    </span>
+                    <span className="text-[9px] text-amber-400 font-semibold animate-pulse">
+                      1 clic pour changer
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
                     {alternatives.map((alt) => (
                       <button
                         key={alt.id}
                         onClick={() => onSelectAlternative(alt.id)}
-                        className="w-full text-left p-2 rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 hover:text-white flex items-center justify-between transition-colors group"
+                        className="w-full text-left p-2 rounded-xl bg-slate-950/90 hover:bg-slate-800/90 border border-slate-800/90 hover:border-red-500/40 text-xs text-slate-300 hover:text-white flex items-center justify-between transition-all group shadow-sm"
                       >
-                        <div className="truncate mr-1">
-                          <span className="font-semibold block truncate group-hover:text-red-400">{alt.name}</span>
-                          <span className="text-[10px] text-slate-500 block truncate">{alt.id}</span>
+                        <div className="truncate mr-1.5 min-w-0">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className="font-bold text-white group-hover:text-red-400 truncate text-[11px]">{alt.name}</span>
+                            {alt.hp && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-red-950/60 text-red-300 border border-red-500/20 font-mono font-semibold shrink-0">
+                                {alt.hp} PV
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400 block truncate mt-0.5">
+                            {alt.set?.name || alt.id}
+                          </span>
                         </div>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-amber-400 shrink-0">
-                          #{alt.localId}
-                        </span>
+                        <div className="flex flex-col items-end shrink-0 gap-0.5">
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-amber-400 font-bold">
+                            #{alt.localId}
+                          </span>
+                          <span className="text-[9px] text-slate-500 group-hover:text-red-400 flex items-center gap-0.5">
+                            <span>Choisir</span>
+                            <ChevronRight className="w-2.5 h-2.5" />
+                          </span>
+                        </div>
                       </button>
                     ))}
                   </div>

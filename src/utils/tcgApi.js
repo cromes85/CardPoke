@@ -62,12 +62,16 @@ export async function getCardDetails(cardId) {
 }
 
 /**
- * 100% Precision Multi-Factor Search Engine with Instant Direct ID Resolution
+ * 100% Precision Multi-Factor Search Engine with HP Matching & Instant Direct ID Resolution
  */
 export async function searchCard(params) {
   const { 
     primaryName = '', 
     name = '',
+    hp = '',
+    stage = '',
+    category = '',
+    detectedCategory = null,
     candidateWords = [], 
     extractedNumbers = [], 
     localId = '', 
@@ -94,6 +98,15 @@ export async function searchCard(params) {
     if (n) numbersToSearch.add(String(n).trim());
   }
 
+  // Parse HP (e.g. "110 PV", "110 HP", 110)
+  let targetHp = null;
+  if (hp) {
+    const parsedHp = parseInt(String(hp).replace(/\D/g, ''), 10);
+    if (!isNaN(parsedHp) && parsedHp >= 30 && parsedHp <= 400) {
+      targetHp = parsedHp;
+    }
+  }
+
   // Determine target set ID from set code OR set total
   let mappedSetId = setCode ? (SET_ALIASES[setCode.toUpperCase()] || (setCode.toLowerCase() !== 'base' && setCode.toLowerCase() !== 'basic' ? setCode.toLowerCase() : null)) : null;
   if (!mappedSetId && totalInSet && SET_TOTAL_MAP[totalInSet]) {
@@ -101,10 +114,11 @@ export async function searchCard(params) {
   }
 
   const targetTotal = parseInt(totalInSet, 10) || null;
-  const candidateMap = new Map();
+  const targetStage = stage || detectedCategory?.stage || '';
   const searchEndpoints = [API_FR, API_EN];
+  const candidateMap = new Map();
 
-  // --- FAST TRACK: Direct Exact Card ID Lookup (Instant 100% Match) ---
+  // --- FAST TRACK 1: Direct Exact Card ID Lookup (Instant 100% Match via Set + Fraction) ---
   if (mappedSetId && localId) {
     const cleanId = localId.replace(/^0+/, '');
     const paddedId = localId.padStart(3, '0');
@@ -133,7 +147,8 @@ export async function searchCard(params) {
                   recognizedName: searchName || cardData.name,
                   recognizedId: localId,
                   recognizedTotal: totalInSet,
-                  recognizedSetCode: setCode
+                  recognizedSetCode: setCode,
+                  recognizedHp: targetHp ? `${targetHp} PV` : ''
                 }
               };
             }
@@ -142,6 +157,19 @@ export async function searchCard(params) {
       }
     }
   }
+
+  // Helper to add raw candidates from search queries
+  const addRawCandidate = (card, bonus = 0) => {
+    if (!card || !card.id) return;
+    if (!candidateMap.has(card.id)) {
+      candidateMap.set(card.id, { card, initialBonus: bonus });
+    } else {
+      const existing = candidateMap.get(card.id);
+      if (bonus > existing.initialBonus) {
+        existing.initialBonus = bonus;
+      }
+    }
+  };
 
   // --- STRATEGY 0: Direct Combo Name + Number Query ---
   for (const word of Array.from(wordsToSearch).slice(0, 4)) {
@@ -156,8 +184,10 @@ export async function searchCard(params) {
             const res = await fetch(`${endpoint}/cards?name=${encodeURIComponent(word)}&localId=${encodeURIComponent(n)}`);
             if (res.ok) {
               const list = await res.json();
-              for (const card of list) {
-                scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 140);
+              if (Array.isArray(list)) {
+                for (const card of list) {
+                  addRawCandidate(card, 150);
+                }
               }
             }
           } catch (e) {}
@@ -173,8 +203,10 @@ export async function searchCard(params) {
         const res = await fetch(`${endpoint}/cards?name=${encodeURIComponent(word)}`);
         if (res.ok) {
           const list = await res.json();
-          for (const card of list) {
-            scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 30);
+          if (Array.isArray(list)) {
+            for (const card of list) {
+              addRawCandidate(card, 40);
+            }
           }
         }
       } catch (e) {}
@@ -194,8 +226,10 @@ export async function searchCard(params) {
             const res = await fetch(`${endpoint}/cards?localId=${encodeURIComponent(idTry)}`);
             if (res.ok) {
               const list = await res.json();
-              for (const card of list) {
-                scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 10);
+              if (Array.isArray(list)) {
+                for (const card of list) {
+                  addRawCandidate(card, 20);
+                }
               }
             }
           } catch (e) {}
@@ -204,7 +238,123 @@ export async function searchCard(params) {
     }
   }
 
-  const sorted = Array.from(candidateMap.values())
+  if (candidateMap.size === 0) {
+    return null;
+  }
+
+  // --- ENRICH CANDIDATES IN PARALLEL (Fetch full details for accurate HP, Set & Stage scoring) ---
+  const rawList = Array.from(candidateMap.values()).slice(0, 16);
+  const detailedCandidates = await Promise.all(
+    rawList.map(async ({ card, initialBonus }) => {
+      try {
+        const details = await getCardDetails(card.id);
+        return {
+          card: details || card,
+          rawBonus: initialBonus
+        };
+      } catch (e) {
+        return { card, rawBonus: initialBonus };
+      }
+    })
+  );
+
+  // --- MULTI-FACTOR FINAL RANKING ENGINE ---
+  const scoredCandidates = [];
+  const ctx = {
+    searchName,
+    wordsToSearch,
+    numbersToSearch,
+    targetHp,
+    targetTotal,
+    targetStage,
+    mappedSetId
+  };
+
+  for (const item of detailedCandidates) {
+    const card = item.card;
+    if (!card || !card.id) continue;
+
+    let score = item.rawBonus || 0;
+    const cardName = (card.name || '').toLowerCase().replace(/[-_']/g, ' ');
+    const cardId = String(card.localId || '').trim();
+    const cleanCardId = cardId.replace(/^0+/, '');
+    const paddedCardId = cleanCardId.padStart(3, '0');
+
+    // 1. Name Match
+    const targetLower = (searchName || '').toLowerCase().replace(/[-_']/g, ' ');
+    if (targetLower) {
+      if (cardName === targetLower) {
+        score += 120;
+      } else if (cardName.startsWith(targetLower) || targetLower.startsWith(cardName)) {
+        score += 100;
+      } else if (cardName.includes(targetLower) || targetLower.includes(cardName)) {
+        score += 80;
+      } else {
+        const firstTargetWord = targetLower.split(' ')[0];
+        const firstCardWord = cardName.split(' ')[0];
+        if (firstTargetWord && firstCardWord && (firstTargetWord === firstCardWord || cardName.includes(firstTargetWord))) {
+          score += 60;
+        }
+      }
+    }
+
+    for (const word of wordsToSearch) {
+      const wLower = word.toLowerCase().replace(/[-_']/g, ' ');
+      if (cardName.includes(wLower)) {
+        score += 20;
+        break;
+      }
+    }
+
+    // 2. Number / Local ID Match
+    for (const num of numbersToSearch) {
+      const cleanN = String(num).replace(/^0+/, '');
+      const paddedN = cleanN.padStart(3, '0');
+      if (String(num) === cardId) {
+        score += 120;
+        break;
+      } else if (cleanN === cleanCardId || paddedN === paddedCardId) {
+        score += 100;
+        break;
+      }
+    }
+
+    // 3. Set Code / Total in Set Match
+    if (mappedSetId && card.id.toLowerCase().includes(mappedSetId.toLowerCase())) {
+      score += 150;
+    }
+    if (targetTotal && card.set?.cardCount?.official && Number(card.set.cardCount.official) === targetTotal) {
+      score += 150;
+    }
+
+    // 4. HP / PV Match (Crucial for disambiguating identical Pokémon across eras)
+    if (targetHp && card.hp) {
+      const cardHpNum = parseInt(String(card.hp).replace(/\D/g, ''), 10);
+      if (cardHpNum === targetHp) {
+        score += 100; // Strong match for exact HP!
+      } else {
+        score -= 40;  // Strong penalty for different HP!
+      }
+    }
+
+    // 5. Stage Match (Base vs Niveau 1 vs Niveau 2)
+    if (targetStage && card.stage) {
+      const stageLower = String(card.stage).toLowerCase();
+      const targetStageLower = String(targetStage).toLowerCase();
+      if (stageLower === targetStageLower || stageLower.includes(targetStageLower) || targetStageLower.includes(stageLower)) {
+        score += 40;
+      }
+    }
+
+    // 6. Image Availability Bonus
+    if (card.image) {
+      score += 10;
+    }
+
+    scoredCandidates.push({ card, score });
+  }
+
+  const sorted = scoredCandidates
     .filter(c => c.score >= 50)
     .sort((a, b) => b.score - a.score)
     .map(c => c.card);
@@ -213,72 +363,19 @@ export async function searchCard(params) {
     return null;
   }
 
-  const bestMatch = await getCardDetails(sorted[0].id);
+  const bestMatch = sorted[0];
 
   return {
     bestMatch,
-    alternatives: sorted.slice(1, 8),
+    alternatives: sorted.slice(1, 10),
     meta: {
-      recognizedName: searchName,
+      recognizedName: searchName || bestMatch.name,
       recognizedId: localId,
       recognizedTotal: totalInSet,
-      recognizedSetCode: setCode
+      recognizedSetCode: setCode,
+      recognizedHp: targetHp ? `${targetHp} PV` : ''
     }
   };
-}
-
-function scoreAndAddCandidate(card, map, ctx, baseBonus = 0) {
-  if (!card || !card.id) return;
-
-  const cardName = (card.name || '').toLowerCase().replace(/[-_']/g, ' ');
-  const cardId = String(card.localId || '').trim();
-  const cleanCardId = cardId.replace(/^0+/, '');
-
-  let score = baseBonus;
-
-  // 1. Name Match
-  const targetLower = (ctx.searchName || '').toLowerCase().replace(/[-_']/g, ' ');
-  if (targetLower) {
-    if (cardName === targetLower) {
-      score += 120;
-    } else if (cardName.startsWith(targetLower) || targetLower.startsWith(cardName)) {
-      score += 100;
-    } else if (cardName.includes(targetLower) || targetLower.includes(cardName)) {
-      score += 80;
-    } else {
-      const firstTargetWord = targetLower.split(' ')[0];
-      const firstCardWord = cardName.split(' ')[0];
-      if (firstTargetWord && firstCardWord && (firstTargetWord === firstCardWord || cardName.includes(firstTargetWord))) {
-        score += 60;
-      }
-    }
-  }
-
-  for (const word of ctx.wordsToSearch) {
-    const wLower = word.toLowerCase().replace(/[-_']/g, ' ');
-    if (cardName.includes(wLower)) {
-      score += 30;
-      break;
-    }
-  }
-
-  // 2. Number Match
-  for (const num of ctx.numbersToSearch) {
-    const cleanN = String(num).replace(/^0+/, '');
-    if (cleanN === cleanCardId) {
-      score += 80;
-      break;
-    }
-  }
-
-  // 3. Set Code / Series Match
-  if (ctx.mappedSetId && card.id.toLowerCase().includes(ctx.mappedSetId)) {
-    score += 90;
-  }
-
-  if (!map.has(card.id) || map.get(card.id).score < score) {
-    map.set(card.id, { card, score });
-  }
 }
 
 /**

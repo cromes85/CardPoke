@@ -390,7 +390,7 @@ export function detectCategoryFromText(text) {
     return { category: 'Pokémon', subCategory: 'Base', stage: 'Base', badge: '⚡ BASE', color: '#10b981' };
   }
 
-  return null;
+  return { category: 'Pokémon', subCategory: 'Standard', stage: 'Standard', badge: '🎴 CARTE', color: '#64748b' };
 }
 
 function cleanWord(str) {

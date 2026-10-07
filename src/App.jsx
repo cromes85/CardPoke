@@ -15,15 +15,16 @@ import { getSavedCollection, saveCardToCollection, removeCardFromCollection } fr
 
 export default function App() {
   // Navigation & UI States
-  const [activeTab, setActiveTab] = useState('scanner'); // 'scanner', 'collection', 'search'
+  const [activeTab, setActiveTab] = useState('scanner');
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [showDeployGuide, setShowDeployGuide] = useState(false);
+  const [prefilledQuery, setPrefilledQuery] = useState('');
 
   // Collection State
   const [collection, setCollection] = useState([]);
 
   // Scan & Processing States
-  const [capturedData, setCapturedData] = useState(null); // { sourceCanvas, detectedCorners }
+  const [capturedData, setCapturedData] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
@@ -34,7 +35,7 @@ export default function App() {
   const [ocrMeta, setOcrMeta] = useState({});
   const [userCroppedDataUrl, setUserCroppedDataUrl] = useState(null);
 
-  // Load collection from localStorage on mount
+  // Load collection on mount
   useEffect(() => {
     const saved = getSavedCollection();
     setCollection(saved);
@@ -44,12 +45,11 @@ export default function App() {
     return collection.reduce((sum, item) => sum + (Number(item.priceEur) || 0), 0);
   }, [collection]);
 
-  // Step 1: Capture frame from camera or file
   const handleCardCaptured = (captureResult) => {
     setCapturedData(captureResult);
   };
 
-  // Step 2: Confirm Crop & run OCR + TCG API search
+  // Confirm Crop & run OCR + TCG search
   const handleConfirmCropAndScan = async (warpedCanvas, sourceCanvas) => {
     setCapturedData(null);
     setIsProcessing(true);
@@ -60,20 +60,21 @@ export default function App() {
     setUserCroppedDataUrl(croppedDataUrl);
 
     try {
-      // 1. Run OCR on cropped & rectified card
+      // 1. Run OCR
       const ocrResult = await ocrService.scanCard(warpedCanvas, (prog) => {
         setOcrProgress(prog);
       });
 
       setStatusMessage("Recherche des cotes en direct sur TCGdex...");
 
-      // 2. Query TCGdex with extracted Name & Number
+      // 2. Query TCGdex
       const searchResult = await searchCard({
-        name: ocrResult.name,
+        primaryName: ocrResult.primaryName,
+        candidateWords: ocrResult.candidateWords,
+        extractedNumbers: ocrResult.extractedNumbers,
         localId: ocrResult.localId,
         totalInSet: ocrResult.totalInSet,
-        setCode: ocrResult.setCode,
-        hp: ocrResult.hp
+        setCode: ocrResult.setCode
       });
 
       setIsProcessing(false);
@@ -84,18 +85,18 @@ export default function App() {
         setAlternativeMatches(searchResult.alternatives || []);
         setOcrMeta(searchResult.meta || {});
       } else {
-        // Fallback: If not found automatically, open manual search with pre-filled query
-        alert(`Lecture OCR : "${ocrResult.name || 'Nom non détecté'}" (#${ocrResult.localId || '?'}). Recherche manuelle ouverte pour vérification.`);
+        // Fallback gracefully without alert popup
+        const queryCandidate = ocrResult.primaryName || ocrResult.localId || '';
+        setPrefilledQuery(queryCandidate);
         setActiveTab('search');
       }
     } catch (err) {
-      console.error("Scan analysis failed:", err);
+      console.error("Scan analysis error:", err);
       setIsProcessing(false);
-      alert("Erreur lors de l'analyse. Veuillez réessayer avec un meilleur éclairage.");
+      setActiveTab('search');
     }
   };
 
-  // Switch alternative match
   const handleSelectAlternative = async (cardId) => {
     setIsProcessing(true);
     const details = await getCardDetails(cardId);
@@ -105,7 +106,6 @@ export default function App() {
     }
   };
 
-  // In-place manual query update from Result Modal
   const handleUpdateSearch = async (params) => {
     setIsProcessing(true);
     const searchResult = await searchCard(params);
@@ -117,7 +117,6 @@ export default function App() {
     }
   };
 
-  // Save card to collection
   const handleSaveToCollection = (cardData, userPhoto, condition, notes) => {
     const newItem = saveCardToCollection(cardData, userPhoto, condition, notes);
     if (newItem) {
@@ -125,7 +124,6 @@ export default function App() {
     }
   };
 
-  // Delete card from collection
   const handleRemoveFromCollection = (itemId) => {
     const updated = removeCardFromCollection(itemId);
     setCollection(updated);
@@ -134,7 +132,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-red-500 selection:text-white">
       
-      {/* Top Header Navigation */}
+      {/* Header */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -145,7 +143,7 @@ export default function App() {
         onOpenDeployGuide={() => setShowDeployGuide(true)}
       />
 
-      {/* Main Viewport Content */}
+      {/* Main Viewport */}
       <main className="flex-1 flex flex-col justify-start py-4 sm:py-6">
         {activeTab === 'scanner' && (
           <Scanner
@@ -172,6 +170,7 @@ export default function App() {
 
         {activeTab === 'search' && (
           <ManualSearch
+            initialQuery={prefilledQuery}
             onSelectCard={(card) => {
               setSelectedCard(card);
               setAlternativeMatches([]);
@@ -181,7 +180,6 @@ export default function App() {
       </main>
 
       {/* Modals */}
-      {/* 1. Card Crop / Perspective Adjustment Modal */}
       {capturedData && (
         <CardCropModal
           sourceCanvas={capturedData.sourceCanvas}
@@ -191,7 +189,6 @@ export default function App() {
         />
       )}
 
-      {/* 2. Card Result & Market Valuation Modal */}
       {selectedCard && (
         <CardResultModal
           card={selectedCard}
@@ -209,14 +206,12 @@ export default function App() {
         />
       )}
 
-      {/* 3. GitHub Pages Deployment Guide Modal */}
       {showDeployGuide && (
         <DeployGuideModal
           onClose={() => setShowDeployGuide(false)}
         />
       )}
 
-      {/* Bottom Footer */}
       <Footer onOpenDeployGuide={() => setShowDeployGuide(true)} />
 
     </div>

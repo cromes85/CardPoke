@@ -14,11 +14,17 @@ const QUICK_SEARCH_CHIPS = [
   'Rayquaza'
 ];
 
-export default function ManualSearch({ onSelectCard }) {
-  const [query, setQuery] = useState('');
+export default function ManualSearch({ initialQuery = '', onSelectCard }) {
+  const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+
+  useEffect(() => {
+    if (initialQuery) {
+      setQuery(initialQuery);
+    }
+  }, [initialQuery]);
 
   // Trigger search with debounce
   useEffect(() => {

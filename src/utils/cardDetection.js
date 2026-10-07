@@ -1,15 +1,15 @@
-// Computer Vision Utilities for Card Detection, Perspective Correction, and OCR Preprocessing
+// Computer Vision Utilities for Card Detection, Perspective Correction, and ROI Cropping
 
 export const CARD_ASPECT_RATIO = 63 / 88; // ~0.7159 (Standard Pokémon Card)
 
 /**
- * Robust Card Edge & Corner Detection (OpenCV.js + High-performance Pure JS Sobel/Contour Fallback)
+ * Robust Card Edge & Corner Detection (Pure JS Edge Gradient & Bounding Box)
  */
 export function detectCardCorners(canvas) {
   const width = canvas.width;
   const height = canvas.height;
-  
-  // 1. Try OpenCV.js if loaded in window
+
+  // 1. OpenCV.js if loaded in window
   if (window.cv && window.cv.Mat && window.cv.imread) {
     try {
       const cv = window.cv;
@@ -23,7 +23,6 @@ export function detectCardCorners(canvas) {
       cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
       cv.Canny(blurred, edged, 30, 120);
       
-      // Dilate slightly to close gaps in card edges
       const M = cv.Mat.ones(3, 3, cv.CV_8U);
       cv.dilate(edged, dilated, M);
       
@@ -33,7 +32,7 @@ export function detectCardCorners(canvas) {
       
       let maxArea = 0;
       let bestCorners = null;
-      const minCardArea = (width * height) * 0.08; // at least 8% of image
+      const minCardArea = (width * height) * 0.08;
       const maxCardArea = (width * height) * 0.98;
 
       for (let i = 0; i < contours.size(); ++i) {
@@ -46,7 +45,6 @@ export function detectCardCorners(canvas) {
           cv.approxPolyDP(contour, approx, 0.03 * peri, true);
           
           if (approx.rows === 4 && area > maxArea) {
-            // Check if aspect ratio roughly matches a card
             const pts = [];
             for (let j = 0; j < 4; j++) {
               pts.push({
@@ -65,8 +63,7 @@ export function detectCardCorners(canvas) {
             const avgH = (h1 + h2) / 2;
             const ratio = Math.min(avgW, avgH) / Math.max(avgW, avgH);
             
-            // Typical card ratio is ~0.71, allow tolerance 0.55 - 0.90
-            if (ratio >= 0.50 && ratio <= 0.92) {
+            if (ratio >= 0.50 && ratio <= 0.95) {
               maxArea = area;
               bestCorners = ordered;
             }
@@ -75,7 +72,6 @@ export function detectCardCorners(canvas) {
         }
       }
       
-      // Cleanup OpenCV Mats
       src.delete();
       gray.delete();
       blurred.delete();
@@ -85,34 +81,28 @@ export function detectCardCorners(canvas) {
       contours.delete();
       hierarchy.delete();
       
-      if (bestCorners) {
-        return bestCorners;
-      }
+      if (bestCorners) return bestCorners;
     } catch (e) {
-      console.warn("OpenCV card detection error, fallback to algorithmic scan:", e);
+      console.warn("OpenCV card detection error, fallback to JS detector:", e);
     }
   }
 
-  // 2. Pure JavaScript Edge Gradient & Bounding Hull Detector
+  // 2. Pure JS Edge Scan
   try {
     const jsCorners = detectCardCornersPureJS(canvas);
     if (jsCorners) return jsCorners;
   } catch (e) {
-    console.warn("Pure JS edge detection fallback error:", e);
+    console.warn("Pure JS edge detector error:", e);
   }
 
-  // 3. Fallback: Centered card viewport with standard ratio
+  // 3. Fallback: Centered card viewport
   return getDefaultCenteredCorners(width, height);
 }
 
-/**
- * Pure JavaScript Edge / Contrast Detector for Card Borders
- */
 function detectCardCornersPureJS(canvas) {
   const w = canvas.width;
   const h = canvas.height;
   
-  // Downscale for fast analysis
   const maxDim = 320;
   const scale = Math.min(1, maxDim / Math.max(w, h));
   const sw = Math.floor(w * scale);
@@ -127,7 +117,6 @@ function detectCardCornersPureJS(canvas) {
   const imgData = ctx.getImageData(0, 0, sw, sh);
   const d = imgData.data;
   
-  // Grayscale & Sobel Gradient
   const gray = new Uint8Array(sw * sh);
   for (let i = 0; i < sw * sh; i++) {
     const r = d[i * 4];
@@ -136,40 +125,33 @@ function detectCardCornersPureJS(canvas) {
     gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
   }
   
-  // Scan from 4 directions (left, right, top, bottom) to detect first strong border edge
   const threshold = 35;
   let minX = sw, maxX = 0, minY = sh, maxY = 0;
   
-  // Horizontal scans (rows)
   for (let y = Math.floor(sh * 0.1); y < sh * 0.9; y += 4) {
     for (let x = 2; x < sw - 2; x++) {
-      const grad = Math.abs(gray[y * sw + x] - gray[y * sw + x - 1]);
-      if (grad > threshold) {
+      if (Math.abs(gray[y * sw + x] - gray[y * sw + x - 1]) > threshold) {
         if (x < minX) minX = x;
         break;
       }
     }
     for (let x = sw - 3; x > 2; x--) {
-      const grad = Math.abs(gray[y * sw + x] - gray[y * sw + x + 1]);
-      if (grad > threshold) {
+      if (Math.abs(gray[y * sw + x] - gray[y * sw + x + 1]) > threshold) {
         if (x > maxX) maxX = x;
         break;
       }
     }
   }
   
-  // Vertical scans (cols)
   for (let x = Math.floor(sw * 0.1); x < sw * 0.9; x += 4) {
     for (let y = 2; y < sh - 2; y++) {
-      const grad = Math.abs(gray[y * sw + x] - gray[(y - 1) * sw + x]);
-      if (grad > threshold) {
+      if (Math.abs(gray[y * sw + x] - gray[(y - 1) * sw + x]) > threshold) {
         if (y < minY) minY = y;
         break;
       }
     }
     for (let y = sh - 3; y > 2; y--) {
-      const grad = Math.abs(gray[y * sw + x] - gray[(y + 1) * sw + x]);
-      if (grad > threshold) {
+      if (Math.abs(gray[y * sw + x] - gray[(y + 1) * sw + x]) > threshold) {
         if (y > maxY) maxY = y;
         break;
       }
@@ -179,38 +161,29 @@ function detectCardCornersPureJS(canvas) {
   const boxW = (maxX - minX) / scale;
   const boxH = (maxY - minY) / scale;
   
-  // Validate detected box
   if (boxW > w * 0.25 && boxH > h * 0.25 && maxX > minX && maxY > minY) {
-    const startX = minX / scale;
-    const startY = minY / scale;
-    const endX = maxX / scale;
-    const endY = maxY / scale;
-    
     return [
-      { x: startX, y: startY },
-      { x: endX, y: startY },
-      { x: endX, y: endY },
-      { x: startX, y: endY }
+      { x: minX / scale, y: minY / scale },
+      { x: maxX / scale, y: minY / scale },
+      { x: maxX / scale, y: maxY / scale },
+      { x: minX / scale, y: maxY / scale }
     ];
   }
   
   return null;
 }
 
-/**
- * Returns centered default corners matching Pokémon card ratio
- */
 export function getDefaultCenteredCorners(width, height) {
-  const margin = 0.08;
+  const margin = 0.06;
   const availW = width * (1 - margin * 2);
   const availH = height * (1 - margin * 2);
   
   let targetW, targetH;
   if (availW / availH > CARD_ASPECT_RATIO) {
-    targetH = availH * 0.88;
+    targetH = availH * 0.90;
     targetW = targetH * CARD_ASPECT_RATIO;
   } else {
-    targetW = availW * 0.88;
+    targetW = availW * 0.90;
     targetH = targetW / CARD_ASPECT_RATIO;
   }
   
@@ -218,16 +191,13 @@ export function getDefaultCenteredCorners(width, height) {
   const startY = (height - targetH) / 2;
   
   return [
-    { x: startX, y: startY },                       // Top-Left
-    { x: startX + targetW, y: startY },             // Top-Right
-    { x: startX + targetW, y: startY + targetH },   // Bottom-Right
-    { x: startX, y: startY + targetH }              // Bottom-Left
+    { x: startX, y: startY },
+    { x: startX + targetW, y: startY },
+    { x: startX + targetW, y: startY + targetH },
+    { x: startX, y: startY + targetH }
   ];
 }
 
-/**
- * Order points logically: Top-Left, Top-Right, Bottom-Right, Bottom-Left
- */
 export function orderCorners(pts) {
   const sumSorted = [...pts].sort((a, b) => (a.x + a.y) - (b.x + b.y));
   const tl = sumSorted[0];
@@ -242,7 +212,7 @@ export function orderCorners(pts) {
 }
 
 /**
- * 4-Point Perspective Transform (Bilinear Interpolation & OpenCV Homography Warp)
+ * 4-Point Perspective Transform (Homography Warp)
  */
 export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 880) {
   const [tl, tr, br, bl] = orderCorners(corners);
@@ -251,7 +221,7 @@ export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 
   outCanvas.height = targetH;
   const outCtx = outCanvas.getContext('2d', { willReadFrequently: true });
 
-  // 1. OpenCV.js high quality warp
+  // 1. OpenCV.js Warp
   if (window.cv && window.cv.Mat && window.cv.imread) {
     try {
       const cv = window.cv;
@@ -284,11 +254,11 @@ export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 
       
       return outCanvas;
     } catch (e) {
-      console.warn("OpenCV warp error, fallback to JS bilinear homography:", e);
+      console.warn("OpenCV warp error, fallback to bilinear mesh:", e);
     }
   }
 
-  // 2. Pure JavaScript Bilinear Mesh Homography Warp
+  // 2. Pure JS Bilinear Perspective Warp (Clean, No artifacts)
   try {
     const srcCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
     const srcData = srcCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
@@ -299,10 +269,8 @@ export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 
     const sw = sourceCanvas.width;
     const sh = sourceCanvas.height;
 
-    // Direct Bilinear Quadrilateral Mapping
     for (let y = 0; y < targetH; y++) {
       const v = y / targetH;
-      // Interpolate left and right boundaries
       const lx = tl.x + v * (bl.x - tl.x);
       const ly = tl.y + v * (bl.y - tl.y);
       const rx = tr.x + v * (br.x - tr.x);
@@ -310,11 +278,9 @@ export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 
 
       for (let x = 0; x < targetW; x++) {
         const u = x / targetW;
-        // Target source point
         const sx = lx + u * (rx - lx);
         const sy = ly + u * (ry - ly);
 
-        // Nearest / Bilinear source pixel
         const px = Math.floor(sx);
         const py = Math.floor(sy);
 
@@ -333,8 +299,6 @@ export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 
     outCtx.putImageData(dstData, 0, 0);
     return outCanvas;
   } catch (err) {
-    console.warn("JS mesh warp fallback error:", err);
-    // Bounding box crop fallback
     const minX = Math.max(0, Math.min(tl.x, bl.x));
     const maxX = Math.min(sourceCanvas.width, Math.max(tr.x, br.x));
     const minY = Math.max(0, Math.min(tl.y, tr.y));
@@ -345,60 +309,34 @@ export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 
 }
 
 /**
- * Crop specific Region of Interest (ROI) and optimize for OCR
+ * Crop Clean ROI without destructive contrast filters
  */
-export function extractAndPreprocessRoi(cardCanvas, zone = 'bottom_number') {
+export function extractAndPreprocessRoi(cardCanvas, zone = 'full') {
   const w = cardCanvas.width;
   const h = cardCanvas.height;
   
-  let roiX, roiY, roiW, roiH;
+  let roiX = 0, roiY = 0, roiW = w, roiH = h;
   
   if (zone === 'top_name') {
-    roiX = Math.floor(w * 0.08);
+    roiX = Math.floor(w * 0.05);
     roiY = Math.floor(h * 0.02);
-    roiW = Math.floor(w * 0.84);
-    roiH = Math.floor(h * 0.16);
+    roiW = Math.floor(w * 0.90);
+    roiH = Math.floor(h * 0.20);
   } else if (zone === 'bottom_number') {
     roiX = Math.floor(w * 0.03);
-    roiY = Math.floor(h * 0.83);
+    roiY = Math.floor(h * 0.80);
     roiW = Math.floor(w * 0.94);
-    roiH = Math.floor(h * 0.16);
-  } else {
-    roiX = 0;
-    roiY = 0;
-    roiW = w;
-    roiH = h;
+    roiH = Math.floor(h * 0.19);
   }
   
   const roiCanvas = document.createElement('canvas');
-  const scale = 2.0;
-  roiCanvas.width = Math.floor(roiW * scale);
-  roiCanvas.height = Math.floor(roiH * scale);
+  roiCanvas.width = roiW;
+  roiCanvas.height = roiH;
   
   const ctx = roiCanvas.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(cardCanvas, roiX, roiY, roiW, roiH, 0, 0, roiCanvas.width, roiCanvas.height);
+  ctx.drawImage(cardCanvas, roiX, roiY, roiW, roiH, 0, 0, roiW, roiH);
   
-  const imgData = ctx.getImageData(0, 0, roiCanvas.width, roiCanvas.height);
-  const data = imgData.data;
-  
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-    
-    const contrast = 1.6;
-    const factor = (259 * (contrast * 100 + 255)) / (255 * (259 - contrast * 100));
-    let enhanced = factor * (gray - 128) + 128;
-    enhanced = Math.max(0, Math.min(255, enhanced));
-    
-    data[i] = enhanced;
-    data[i + 1] = enhanced;
-    data[i + 2] = enhanced;
-  }
-  
-  ctx.putImageData(imgData, 0, 0);
   return roiCanvas;
 }

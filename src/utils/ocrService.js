@@ -1,7 +1,6 @@
 import { createWorker } from 'tesseract.js';
 import { extractAndPreprocessRoi } from './cardDetection';
 
-// Non-Pokémon layout words and file noise to filter out
 const STOP_WORDS = new Set([
   'base', 'basic', 'niveau', 'stage', 'dresseur', 'trainer', 'supporter', 'stade', 'stadium', 'item', 'objet', 'talent', 'ability',
   'faiblesse', 'weakness', 'resistance', 'résistance', 'retraite', 'retreat', 'pokemon', 'pokémon', 'evolution', 'évolution',
@@ -10,8 +9,7 @@ const STOP_WORDS = new Set([
   'nintendo', 'creatures', 'taille', 'poids', 'confiserie', 'cochon', 'mite', 'givre', 'gaz',
   'defenseur', 'défenseur', 'utilise', 'utilisez', 'active', 'banc', 'bench', 'poste', 'energie', 'énergie', 'energy',
   'incolore', 'colorless', 'plante', 'grass', 'feu', 'fire', 'eau', 'water', 'lightning', 'electrik', 'combat', 'fighting', 'obscurite', 'obscurité', 'darkness', 'metal', 'métal', 'steel',
-  'psy', 'psychic', 'dragon', 'illus', 'illustrator', 'illustrateur', 'copyright', 'edition', 'édition',
-  'flip', 'coin', 'tails', 'heads', 'discard', 'takes', 'prize', 'prizes'
+  'psy', 'psychic', 'dragon', 'illus', 'illustrator', 'illustrateur', 'copyright', 'edition', 'édition'
 ]);
 
 class OcrService {
@@ -31,16 +29,13 @@ class OcrService {
     this.isInitializing = true;
     this.initPromise = (async () => {
       try {
-        const worker = await createWorker('fra+eng', 1, {
+        // Use 'eng' language model: ultra-fast, lightweight (3MB), rock solid in all mobile browsers
+        const worker = await createWorker('eng', 1, {
           logger: m => {
             if (m.status === 'recognizing text' && window.__onOcrProgress) {
               window.__onOcrProgress(m.progress);
             }
           }
-        });
-        
-        await worker.setParameters({
-          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzéèêëàâäôöûüçîï/\'-.@ ',
         });
 
         this.worker = worker;
@@ -57,47 +52,39 @@ class OcrService {
   }
 
   /**
-   * Comprehensive Multi-Zone OCR Scan
+   * Scan card canvas
    */
   async scanCard(cardCanvas, onProgress = () => {}) {
     window.__onOcrProgress = onProgress;
     const worker = await this.getWorker();
 
-    // 1. Scan Top Header Zone (Name & HP)
-    onProgress(0.15);
+    onProgress(0.2);
+    // 1. Scan Top Header (Name & HP)
     const topRoi = extractAndPreprocessRoi(cardCanvas, 'top_name');
     const topResult = await worker.recognize(topRoi);
-    const topText = topResult.data.text || '';
+    const topText = topResult?.data?.text || '';
 
-    // 2. Scan Bottom Footer Zone (Card Number, Set Code)
-    onProgress(0.45);
-    const bottomRoi = extractAndPreprocessRoi(cardCanvas, 'bottom_number');
-    const bottomResult = await worker.recognize(bottomRoi);
-    const bottomText = bottomResult.data.text || '';
+    onProgress(0.6);
+    // 2. Scan Full Card for Complete Context
+    const fullResult = await worker.recognize(cardCanvas);
+    const fullText = fullResult?.data?.text || '';
 
-    // 3. Scan Full Card for complete context (attacks, symbols)
-    onProgress(0.70);
-    const fullRoi = extractAndPreprocessRoi(cardCanvas, 'full');
-    const fullResult = await worker.recognize(fullRoi);
-    const fullText = fullResult.data.text || '';
-
-    onProgress(0.90);
-    const parsed = this.parseCardData(topText, bottomText, fullText);
+    onProgress(0.9);
+    const parsed = this.parseCardData(topText, fullText);
     onProgress(1.0);
 
     return {
       rawTopText: topText,
-      rawBottomText: bottomText,
       rawFullText: fullText,
       ...parsed
     };
   }
 
   /**
-   * Advanced Multi-Token & Pattern Parser with Noise Rejection
+   * Advanced Parser & Tokenizer
    */
-  parseCardData(topText, bottomText, fullText) {
-    const combined = `${topText}\n${bottomText}\n${fullText}`;
+  parseCardData(topText, fullText) {
+    const combined = `${topText}\n${fullText}`;
 
     // 1. Extract fraction numbers: XXX/YYY (e.g. 063/193, 053/217, 030/217, 201/217, 018/217)
     let localIdCandidate = '';
@@ -122,14 +109,14 @@ class OcrService {
       numbers.add(num);
     }
 
-    // 2. Extract Set Code (PAL, ASC, MEE, ME02.5, SVP, OBF, SSP, TWM, SVI, PAR, TEF, SCR, MEW, LOR, etc.)
+    // 2. Extract Set Code (PAL, ASC, MEE, ME02.5, ME, SVP, OBF, SSP, TWM, SVI, PAR, TEF, SCR, MEW, LOR, etc.)
     let setCodeCandidate = '';
     const setMatch = normalizedText.match(/\b(PAL|ASC|MEE|ME02\.5|ME|SVP|OBF|SSP|TWM|SVI|PAR|TEF|SCR|PRE|MEW|LOR|ASR|BRS|FST|EVS|CRE|BST|VIV|DAA|SSH)\b/i);
     if (setMatch) {
       setCodeCandidate = setMatch[1].toUpperCase();
     }
 
-    // 3. Extract and Clean Candidate Words (filtering out file names, hex codes, stop words)
+    // 3. Extract and Clean Candidate Words
     const allWords = combined.match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
     const candidateWords = [];
     const seenWords = new Set();
@@ -138,13 +125,12 @@ class OcrService {
       const word = cleanWord(rawWord);
       const lower = word.toLowerCase();
 
-      // Reject file extensions, screen codes (e.g. 5323b, ed.pn, png, jpg, media)
       if (
         lower.length < 3 ||
         STOP_WORDS.has(lower) ||
         seenWords.has(lower) ||
         /^(png|jpg|jpeg|webp|media|img|file|screen|cromes|github)$/i.test(lower) ||
-        /^[0-9a-f]{4,}$/i.test(lower) // reject hex codes
+        /^[0-9a-f]{4,}$/i.test(lower)
       ) {
         continue;
       }
@@ -160,7 +146,6 @@ class OcrService {
 
     for (const line of topLines) {
       let candidate = line;
-      // Skip file names or stage prefixes
       if (/^(BASE|BASIC|NIVEAU|STAGE|NIV|Évolution|Evolution|\d{4}|\w+\.pn)/i.test(candidate)) continue;
       
       candidate = candidate.replace(/(?:PV|pv|HP|hp|P\/?V|H\/?P)\s*\d+/gi, '');
@@ -195,9 +180,9 @@ function cleanWord(str) {
     .replace(/[^\w\s\séèêëàâäôöûüçîï'-]/gi, ' ')
     .trim();
 
-  // Known corrections
   const TYPO_MAP = {
     'pikachuex': 'Pikachu ex',
+    'pikachuded': 'Pikachu ex',
     'pikachu': 'Pikachu',
     'croudon': 'Groudon',
     'groudan': 'Groudon',

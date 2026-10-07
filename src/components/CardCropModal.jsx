@@ -19,7 +19,10 @@ import {
   warpPerspective, 
   detectCardCorners, 
   getDefaultCenteredCorners, 
-  orderCorners 
+  orderCorners,
+  snapAllCornersToEdges,
+  snapPointToEdge,
+  fitCardCornersToRatio
 } from '../utils/cardDetection';
 
 export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm, onCancel }) {
@@ -104,6 +107,20 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
     if (!workingCanvas) return;
     const detected = detectCardCorners(workingCanvas);
     setCorners(detected);
+  };
+
+  // 1-Click Magnetic Snap to Real Card Edges
+  const handleSnapEdges = () => {
+    if (!workingCanvas || corners.length !== 4) return;
+    const snapped = snapAllCornersToEdges(workingCanvas, corners, 35);
+    setCorners(snapped);
+  };
+
+  // Lock and Fit to Official 63:88 Card Ratio
+  const handleFitRatio = () => {
+    if (!workingCanvas || corners.length !== 4) return;
+    const fitted = fitCardCornersToRatio(corners);
+    setCorners(fitted);
   };
 
   // Reset to default card ratio centered
@@ -307,7 +324,7 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
               <h3 className="text-white font-bold text-sm sm:text-base flex items-center gap-1.5">
                 <span>Cadrage Automatique de la Carte</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                  IA v2.4
+                  IA v2.7
                 </span>
               </h3>
               <p className="text-[11px] text-slate-400">
@@ -336,20 +353,28 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
               <span>Auto-Ajuster IA</span>
             </button>
             <button
-              onClick={handleResetCardRatio}
-              title="Recentrer au ratio officiel Pokémon 63:88"
+              onClick={handleSnapEdges}
+              title="Magnétiser les 4 coins automatiquement sur les vrais bords de la carte"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 font-bold border border-purple-500/40 transition-colors"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Magnétiser Bords</span>
+            </button>
+            <button
+              onClick={handleFitRatio}
+              title="Ajuster et verrouiller au ratio officiel Pokémon 63:88"
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700 transition-colors"
             >
               <Scan className="w-3.5 h-3.5" />
-              <span>Format 63:88</span>
+              <span>Ratio 63:88</span>
             </button>
             <button
-              onClick={handleFullImage}
-              title="Sélectionner toute l'image"
+              onClick={handleResetCardRatio}
+              title="Recentrer le cadre au milieu"
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700 transition-colors hidden sm:flex"
             >
-              <Maximize2 className="w-3.5 h-3.5" />
-              <span>Plein cadre</span>
+              <Move className="w-3.5 h-3.5" />
+              <span>Recentrer</span>
             </button>
             <button
               onClick={() => setShowMiniPreview(!showMiniPreview)}

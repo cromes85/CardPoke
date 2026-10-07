@@ -36,6 +36,8 @@ export const SET_TOTAL_MAP = {
 };
 
 const COMMON_NAMES = [
+  'Métang', 'Metang', 'Dedenne', 'Spectrum', 'Haunter', 'Étourmi', 'Etourmi', 'Étourvol', 'Staravia', 'Étouraptor', 'Staraptor',
+  'Terhal', 'Beldum', 'Métalosse', 'Metagross', 'Monorpale', 'Honedge', 'Dimoclès', 'Doublade', 'Exagide', 'Aegislash',
   'Tissenboule de la Team Rocket', 'Amos de la Team Rocket', 'Amis de la Team Rocket', 'Sbire de la Team Rocket',
   'Nostenfer-ex de la Team Rocket', 'Nidoking-ex de la Team Rocket', 'Énergie de la Team Rocket',
   'Sorboul de N', 'Sorbébé de N', 'Sorbouboul de N', 'Grotichon', 'Gruikui', 'Roitiflam',
@@ -45,7 +47,7 @@ const COMMON_NAMES = [
   'Lugia', 'Lugia V', 'Giratina', 'Giratina VSTAR', 'Noctali', 'Umbreon', 'Noctali VMAX', 'Mentali', 'Espeon', 'Aquali', 'Vaporeon', 'Pyroli', 'Flareon', 'Voltali', 'Jolteon', 'Givrali', 'Glaceon', 'Phyllali', 'Leafeon', 'Nymphali', 'Sylveon',
   'Beldeneige', 'Frosmoth', 'Frissonille', 'Snom', 'Groudon', 'Kyogre', 'Dialga', 'Palkia', 'Arceus', 'Zekrom', 'Reshiram',
   'Lucario', 'Carchacrok', 'Garchomp', 'Gardevoir', 'Gardevoir-ex', 'Ronflex', 'Snorlax', 'Evoli', 'Eevee', 'Salamèche', 'Charmander', 'Reptincel', 'Charmeleon', 'Bulbizarre', 'Bulbasaur', 'Herbizarre', 'Ivysaur',
-  'Carapuce', 'Squirtle', 'Carabaffe', 'Wartortle', 'Fantominus', 'Gastly', 'Spectrum', 'Haunter', 'Alakazam', 'Léviator', 'Gyarados', 'Magicarpe', 'Magikarp', 'Minidraco', 'Dratini', 'Draco', 'Dragonair', 'Dracolosse', 'Dragonite',
+  'Carapuce', 'Squirtle', 'Carabaffe', 'Wartortle', 'Fantominus', 'Gastly', 'Alakazam', 'Léviator', 'Gyarados', 'Magicarpe', 'Magikarp', 'Minidraco', 'Dratini', 'Draco', 'Dragonair', 'Dracolosse', 'Dragonite',
   'Porygon', 'Porygon2', 'Porygon-Z', 'Malamandre', 'Salazzle', 'Mortermure', 'Pecharunt', 'Rugit-Lune', 'Roaring Moon', 'Garde-de-Fer', 'Iron Valiant', 'Pelage-Sablé', 'Sandy Shocks',
   'Paume-de-Fer', 'Iron Hands', 'Hurle-Queue', 'Scream Tail', 'Fongus-Furie', 'Brute Bonnet', 'Flotte-Mèche', 'Flutter Mane', 'Hotte-de-Fer', 'Iron Bundle', 'Épine-de-Fer', 'Iron Thorns', 'Chef-de-Fer', 'Iron Crown', 'Marill', 'Azumarill'
 ];
@@ -273,21 +275,29 @@ class OcrService {
         hp = `${hpMatch[1]} PV`;
       }
 
-      // 2. Extract Name
+      // 2. Extract Stage and Name
+      let stage = '';
+      if (/NIVEAU\s*2|STAGE\s*2/i.test(text)) stage = 'NIVEAU 2';
+      else if (/NIVEAU\s*1|STAGE\s*1/i.test(text)) stage = 'NIVEAU 1';
+      else if (/BASE|BASIC/i.test(text)) stage = 'BASE';
+      else if (/DRESSEUR|TRAINER/i.test(text)) stage = 'DRESSEUR';
+
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
       let name = '';
       for (const line of lines) {
-        const match = line.match(/(?:BASE|BASIC|NIVEAU\s*\d?|STAGE\s*\d?|DRESSEUR|TRAINER)?\s*([A-Za-zÀ-ÿ\s'-]+?)\s*(?:PV|HP|PC|P\/V|H\/P|\d{2,3}\s*PV|\d{2,3}\s*HP|\d{2,3}\s*PC|$)/i);
-        if (match && match[1]) {
-          let cand = match[1].trim()
-            .replace(/^(BASE|BASIC|NIVEAU|STAGE|DRESSEUR|TRAINER|Évolution|Evolution)\s*/gi, '')
-            .replace(/\s*(PV|HP|PC|P\/V|H\/P|\d+)$/gi, '')
-            .trim();
-          cand = cleanWord(cand);
-          if (cand.length >= 3 && !STOP_WORDS.has(cand.toLowerCase()) && !/^(attaque|degats|faiblesse|resistance|retraite)$/i.test(cand)) {
-            name = cand;
-            break;
-          }
+        // Strip evolution subtitle (e.g. "Évolution de Terhal", "Évolution de Fantominus")
+        let cleanLine = line
+          .replace(/(?:Évolution|Evolution)\s+(?:de|of)\s+[A-Za-zÀ-ÿ'-]+/gi, ' ')
+          .replace(/N[°o]\s*\d+.*?$/gi, ' ')
+          .replace(/\b(?:BASE|BASIC|NIVEAU\s*\d?|STAGE\s*\d?|DRESSEUR|TRAINER)\b/gi, ' ')
+          .replace(/\b(?:PV|HP|PC|P\/V|H\/P|\d{2,3}\s*(?:PV|HP|PC))\b/gi, ' ')
+          .replace(/[0-9]/g, ' ')
+          .trim();
+
+        cleanLine = cleanWord(cleanLine);
+        if (cleanLine.length >= 3 && !STOP_WORDS.has(cleanLine.toLowerCase()) && !/^(attaque|degats|faiblesse|resistance|retraite|taille|poids)$/i.test(cleanLine)) {
+          name = cleanLine;
+          break;
         }
       }
 
@@ -296,14 +306,20 @@ class OcrService {
         if (fuzzy) name = fuzzy;
       }
 
-      // Fallback to words
+      // Fallback to dictionary match on any words
       if (!name) {
         const words = (text.match(/[A-Za-zÀ-ÿ]{3,}/g) || [])
           .map(w => cleanWord(w))
-          .filter(w => w.length >= 3 && !STOP_WORDS.has(w.toLowerCase()) && !/^(png|jpg|jpeg|webp|media|img|niveau|basic|base|pv|hp|pc)$/i.test(w));
-        if (words.length > 0) {
-          const fuzzy = findFuzzyMatch(words[0]);
-          name = fuzzy || words[0];
+          .filter(w => w.length >= 3 && !STOP_WORDS.has(w.toLowerCase()) && !/^(png|jpg|jpeg|webp|media|img|niveau|basic|base|pv|hp|pc|evolution|terhal|fantominus)$/i.test(w));
+        for (const w of words) {
+          const fuzzy = findFuzzyMatch(w);
+          if (fuzzy) {
+            name = fuzzy;
+            break;
+          }
+        }
+        if (!name && words.length > 0) {
+          name = words[0];
         }
       }
 
@@ -311,6 +327,7 @@ class OcrService {
         rawText: text,
         name: name || '',
         hp: hp || '',
+        stage: stage || '',
         found: !!(name || hp)
       };
     } catch (e) {

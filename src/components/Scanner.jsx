@@ -213,11 +213,17 @@ export default function Scanner({
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
 
-      // Extract card top header zone based on centered card reticle proportions
-      const cropW = Math.floor(vw * 0.45);
-      const cropH = Math.floor(vh * 0.18);
-      const cropX = Math.floor((vw - cropW) / 2);
-      const cropY = Math.floor(vh * 0.28);
+      // The card is centered in video viewport with aspect ratio 63/88:
+      const cardH = vh * 0.70;
+      const cardW = cardH * (63 / 88);
+      const cardTopY = Math.max(0, (vh - cardH) / 2);
+      const cardLeftX = Math.max(0, (vw - cardW) / 2);
+
+      // Extract strictly the TOP BANNER of the card (where Name and HP/PV are printed)
+      const cropW = Math.min(vw - 10, Math.floor(cardW * 0.96));
+      const cropH = Math.min(vh - 10, Math.floor(cardH * 0.20));
+      const cropX = Math.min(vw - cropW, Math.floor(cardLeftX + cardW * 0.02));
+      const cropY = Math.min(vh - cropH, Math.floor(cardTopY + cardH * 0.02));
 
       try {
         isLiveScanningRef.current = true;
@@ -236,6 +242,7 @@ export default function Scanner({
           setLiveHeaderScan({
             name: res.name || '',
             hp: res.hp || '',
+            stage: res.stage || '',
             isSearching: false,
             lastScannedTime: Date.now()
           });
@@ -247,7 +254,7 @@ export default function Scanner({
       } finally {
         isLiveScanningRef.current = false;
       }
-    }, 1600);
+    }, 1500);
 
     return () => clearInterval(interval);
   }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus]);
@@ -639,20 +646,20 @@ export default function Scanner({
             <div className={`absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 rounded-bl-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
             <div className={`absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 rounded-br-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
 
-            {/* Target Header Guide */}
-            <div className="w-full flex items-center justify-between">
-              <span className={`text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 border ${
+            {/* Target Card Header Guide */}
+            <div className="w-full flex items-center justify-between mb-1">
+              <span className={`text-[9.5px] sm:text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 border ${
                 scanMode === 'batch3d' ? 'text-emerald-400 border-emerald-500/30' : 'text-red-400 border-red-500/30'
               }`}>
-                {scanMode === 'batch3d' ? 'Emplacement Support 3D' : 'Viseur Carte'}
+                {scanMode === 'batch3d' ? 'Support 3D' : 'Viseur Carte'}
               </span>
-              <span className="text-[10px] text-white/70 bg-slate-950/85 px-1.5 py-0.5 rounded font-mono">
+              <span className="text-[9.5px] sm:text-[10px] text-white/70 bg-slate-950/85 px-1.5 py-0.5 rounded font-mono">
                 63x88mm
               </span>
             </div>
 
-            {/* DYNAMIC BLUE TARGETING FRAME (Cadre Bleu : Recherche Nom & PV) */}
-            <div className="relative w-full rounded-xl border-2 border-blue-400 bg-blue-500/15 backdrop-blur-[1px] p-2 flex flex-col justify-between shadow-[0_0_20px_rgba(59,130,246,0.45),inset_0_0_12px_rgba(59,130,246,0.2)] transition-all my-auto min-h-[72px] sm:min-h-[85px]">
+            {/* DYNAMIC BLUE TARGETING FRAME (Cadre Bleu : En haut de la carte pour Nom & PV) */}
+            <div className="relative w-full rounded-xl border-2 border-blue-400 bg-blue-500/20 backdrop-blur-[1px] p-2 flex flex-col justify-between shadow-[0_0_22px_rgba(59,130,246,0.5),inset_0_0_12px_rgba(59,130,246,0.25)] transition-all min-h-[66px] sm:min-h-[74px]">
               {/* 4 Blue Inner Corner Reticles */}
               <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-cyan-300 rounded-tl-sm" />
               <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-cyan-300 rounded-tr-sm" />
@@ -661,27 +668,32 @@ export default function Scanner({
 
               {/* Header Label inside Blue Frame */}
               <div className="flex items-center justify-between w-full">
-                <span className="flex items-center gap-1.5 text-[8.5px] sm:text-[9.5px] font-black tracking-wide uppercase px-2 py-0.5 rounded bg-blue-600/90 text-white shadow-md border border-blue-400/50">
+                <span className="flex items-center gap-1.5 text-[8.5px] sm:text-[9.5px] font-black tracking-wide uppercase px-2 py-0.5 rounded bg-blue-600 text-white shadow-md border border-blue-400/50">
                   <span className="w-1.5 h-1.5 rounded-full bg-cyan-300 animate-ping" />
-                  <span>Cadre Bleu : Nom & PV</span>
+                  <span>Cadre Bleu : Haut de la Carte</span>
                 </span>
                 {liveHeaderScan.isSearching ? (
                   <span className="text-[8.5px] text-cyan-300 font-mono font-bold animate-pulse">
-                    SCAN IA...
+                    SCAN...
                   </span>
                 ) : (
-                  <span className="text-[8.5px] text-blue-300/80 font-semibold hidden sm:inline">
-                    En direct
+                  <span className="text-[8.5px] text-blue-300/90 font-semibold">
+                    Nom & PV
                   </span>
                 )}
               </div>
 
               {/* Dynamic Live Result Pill */}
-              <div className="flex items-center justify-center w-full my-auto py-1">
+              <div className="flex items-center justify-center w-full my-auto py-0.5">
                 {liveHeaderScan.name || liveHeaderScan.hp ? (
                   <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-slate-950/95 border border-cyan-400 text-cyan-300 font-black text-[11px] sm:text-xs shadow-xl animate-in zoom-in-95">
                     <span className="text-amber-400 text-xs">🎯</span>
-                    <span className="truncate max-w-[120px] sm:max-w-[160px]">{liveHeaderScan.name || 'Pokémon'}</span>
+                    {liveHeaderScan.stage && (
+                      <span className="text-[8.5px] px-1 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                        {liveHeaderScan.stage}
+                      </span>
+                    )}
+                    <span className="truncate max-w-[110px] sm:max-w-[150px]">{liveHeaderScan.name || 'Pokémon'}</span>
                     {liveHeaderScan.hp && (
                       <span className="px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-200 border border-cyan-500/50 text-[10px] font-mono">
                         {liveHeaderScan.hp}
@@ -689,8 +701,8 @@ export default function Scanner({
                     )}
                   </div>
                 ) : (
-                  <div className="flex items-center gap-1 text-[9px] text-blue-200/90 font-medium bg-slate-950/60 px-2 py-0.5 rounded-md">
-                    <span className="animate-pulse">🔍 Analyse active Nom & PV en attente...</span>
+                  <div className="flex items-center gap-1 text-[8.5px] sm:text-[9.5px] text-blue-200/90 font-medium bg-slate-950/70 px-2 py-0.5 rounded-md">
+                    <span className="animate-pulse">🔍 Analyse active du Nom en haut...</span>
                   </div>
                 )}
               </div>
@@ -699,7 +711,14 @@ export default function Scanner({
               <div className="absolute inset-x-1 h-[2px] bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_8px_#38bdf8] animate-pulse opacity-80" />
             </div>
 
-            {/* Scanning Beam */}
+            {/* Illustration & Attack Zone Spacer */}
+            <div className="w-full flex-1 flex flex-col items-center justify-center border border-dashed border-slate-700/30 rounded-xl my-1.5 bg-slate-950/15">
+              <span className="text-[8.5px] sm:text-[9px] text-slate-500 font-semibold tracking-wider uppercase">
+                Illustration & Attaques
+              </span>
+            </div>
+
+            {/* Scanning Beam (Support 3D) */}
             {batchStatus === 'running' && (
               <div className="absolute inset-x-2 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_#10b981] animate-scan" />
             )}
@@ -711,8 +730,8 @@ export default function Scanner({
                   {motionIndicator === 'chute' ? '⚡ Chute détectée...' : motionIndicator === 'analyse' ? '🔍 Stabilisation & Scan...' : '✨ En attente de la carte suivante...'}
                 </span>
               ) : (
-                <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 text-slate-400 border border-slate-700">
-                  Posez le téléphone sur le support
+                <span className="text-[9px] sm:text-[9.5px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 text-slate-400 border border-slate-700">
+                  Gardez la carte droite dans le cadre
                 </span>
               )}
             </div>

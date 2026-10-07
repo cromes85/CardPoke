@@ -234,15 +234,76 @@ class OcrService {
       if (fuzzy) primaryName = fuzzy;
     }
 
+    // 5. Card Category & Stage Extraction (Base / Niveau 1 / Niveau 2 / Dresseur / Énergie)
+    const detectedCategory = detectCategoryFromText(combined);
+
     return {
       primaryName,
       candidateWords,
       extractedNumbers: Array.from(numbers),
       localId: localIdCandidate,
       totalInSet: totalInSetCandidate,
-      setCode: setCodeCandidate
+      setCode: setCodeCandidate,
+      detectedCategory
     };
   }
+}
+
+/**
+ * Detect Card Category & Evolution Stage from raw text
+ */
+export function detectCategoryFromText(text) {
+  const clean = (text || '').toLowerCase();
+
+  // 1. Dresseurs / Trainers
+  if (/\b(dresseur|trainer)\b/i.test(clean)) {
+    if (/\b(supporter|partisan)\b/i.test(clean)) {
+      return { category: 'Dresseur', subCategory: 'Supporter', stage: 'Supporter', badge: '🎒 SUPPORTER', color: '#f59e0b' };
+    }
+    if (/\b(objet|item)\b/i.test(clean)) {
+      return { category: 'Dresseur', subCategory: 'Objet', stage: 'Objet', badge: '🧪 OBJET', color: '#0ea5e9' };
+    }
+    if (/\b(stade|stadium)\b/i.test(clean)) {
+      return { category: 'Dresseur', subCategory: 'Stade', stage: 'Stade', badge: '🏟️ STADE', color: '#10b981' };
+    }
+    if (/\b(outil|tool)\b/i.test(clean)) {
+      return { category: 'Dresseur', subCategory: 'Outil Pokémon', stage: 'Outil', badge: '🔧 OUTIL', color: '#8b5cf6' };
+    }
+    if (/\b(high-tech|ace spec)\b/i.test(clean)) {
+      return { category: 'Dresseur', subCategory: 'High-Tech', stage: 'High-Tech', badge: '💎 HIGH-TECH', color: '#ec4899' };
+    }
+    return { category: 'Dresseur', subCategory: 'Dresseur', stage: 'Dresseur', badge: '🎒 DRESSEUR', color: '#f59e0b' };
+  }
+
+  // 2. Énergies / Energies
+  if (/\b(energie|énergie|energy)\b/i.test(clean)) {
+    if (/\b(speciale|spéciale|special)\b/i.test(clean)) {
+      return { category: 'Énergie', subCategory: 'Énergie Spéciale', stage: 'Spéciale', badge: '🔮 ÉNERGIE SPÉCIALE', color: '#8b5cf6' };
+    }
+    return { category: 'Énergie', subCategory: 'Énergie de Base', stage: 'Base', badge: '⚡ ÉNERGIE DE BASE', color: '#eab308' };
+  }
+
+  // 3. Pokémon Stages & Formats
+  if (/\b(niveau\s*2|stage\s*2|niv\.2|st\.2)\b/i.test(clean)) {
+    return { category: 'Pokémon', subCategory: 'Niveau 2', stage: 'Niveau 2', badge: '⭐ NIVEAU 2', color: '#a855f7' };
+  }
+  if (/\b(niveau\s*1|stage\s*1|niv\.1|st\.1|evolution|évolution)\b/i.test(clean)) {
+    return { category: 'Pokémon', subCategory: 'Niveau 1', stage: 'Niveau 1', badge: '🔷 NIVEAU 1', color: '#3b82f6' };
+  }
+  if (/\b(vmax)\b/i.test(clean)) {
+    return { category: 'Pokémon', subCategory: 'Pokémon VMAX', stage: 'VMAX', badge: '👑 VMAX', color: '#ec4899' };
+  }
+  if (/\b(vstar)\b/i.test(clean)) {
+    return { category: 'Pokémon', subCategory: 'Pokémon VSTAR', stage: 'VSTAR', badge: '⭐ VSTAR', color: '#eab308' };
+  }
+  if (/\b(v-union)\b/i.test(clean)) {
+    return { category: 'Pokémon', subCategory: 'V-UNION', stage: 'V-UNION', badge: '⚡ V-UNION', color: '#06b6d4' };
+  }
+  if (/\b(base|basic|de base)\b/i.test(clean)) {
+    return { category: 'Pokémon', subCategory: 'Base', stage: 'Base', badge: '⚡ BASE', color: '#10b981' };
+  }
+
+  return null;
 }
 
 function cleanWord(str) {

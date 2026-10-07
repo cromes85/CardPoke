@@ -649,9 +649,14 @@ export default function Scanner({
               )}
             </div>
             <div className="min-w-0">
-              <span className="text-[9px] font-bold text-emerald-400 flex items-center gap-1">
-                <Check className="w-3 h-3" /> Scannée !
-              </span>
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] font-bold text-emerald-400 flex items-center gap-0.5">
+                  <Check className="w-3 h-3" /> Scannée !
+                </span>
+                <span className={`text-[8px] px-1 rounded font-bold border ${(lastScannedCard.card?.categoryInfo || getCardCategoryInfo(lastScannedCard.card)).chipClass}`}>
+                  {(lastScannedCard.card?.categoryInfo || getCardCategoryInfo(lastScannedCard.card)).badge}
+                </span>
+              </div>
               <h5 className="text-xs font-bold text-white truncate">
                 {lastScannedCard.card?.name}
               </h5>

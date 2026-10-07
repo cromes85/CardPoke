@@ -10,13 +10,15 @@ import {
   ExternalLink,
   Search,
   CheckCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Filter
 } from 'lucide-react';
 import { 
   exportCollectionToCsv, 
   exportCollectionToJson, 
   importCollectionFromJson 
 } from '../utils/storage';
+import { getCardCategoryInfo } from '../utils/tcgApi';
 
 export default function Collection({ 
   collection = [], 
@@ -25,6 +27,7 @@ export default function Collection({
   onReloadCollection 
 }) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState('date_desc'); // 'price_desc', 'price_asc', 'date_desc', 'name_asc'
   const fileInputRef = useRef(null);
 
@@ -41,6 +44,8 @@ export default function Collection({
   // Filter & Sort cards
   const filteredCards = useMemo(() => {
     let list = [...collection];
+    
+    // 1. Text Search Filter
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase();
       list = list.filter(c => 
@@ -50,6 +55,34 @@ export default function Collection({
       );
     }
 
+    // 2. Category & Stage Filter
+    if (selectedCategory !== 'all') {
+      list = list.filter(c => {
+        const catInfo = c.categoryInfo || getCardCategoryInfo(c);
+        const name = (c.name || '').toLowerCase();
+        const stage = (catInfo.stage || '').toLowerCase();
+        const cat = (catInfo.category || '').toLowerCase();
+
+        switch (selectedCategory) {
+          case 'base':
+            return stage === 'base' && cat === 'pokémon';
+          case 'stage1':
+            return stage === 'niveau 1' || stage === 'stage 1';
+          case 'stage2':
+            return stage === 'niveau 2' || stage === 'stage 2';
+          case 'trainer':
+            return cat === 'dresseur';
+          case 'energy':
+            return cat === 'énergie';
+          case 'ultra':
+            return name.includes(' ex') || name.includes('-ex') || name.includes(' vmax') || name.includes(' vstar') || name.endsWith(' v') || stage === 'ex' || stage === 'vmax' || stage === 'vstar';
+          default:
+            return true;
+        }
+      });
+    }
+
+    // 3. Sorting
     switch (sortBy) {
       case 'price_desc':
         return list.sort((a, b) => (Number(b.priceEur) || 0) - (Number(a.priceEur) || 0));
@@ -61,7 +94,7 @@ export default function Collection({
       default:
         return list.sort((a, b) => new Date(b.scannedAt || 0) - new Date(a.scannedAt || 0));
     }
-  }, [collection, searchTerm, sortBy]);
+  }, [collection, searchTerm, selectedCategory, sortBy]);
 
   // Handle JSON Import
   const handleImportFile = (e) => {
@@ -216,61 +249,93 @@ export default function Collection({
         </div>
       </div>
 
+      {/* Category Filter Chips Bar */}
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+        {[
+          { id: 'all', label: 'Tous', icon: '✨' },
+          { id: 'base', label: 'Base', icon: '⚡' },
+          { id: 'stage1', label: 'Niveau 1', icon: '🔷' },
+          { id: 'stage2', label: 'Niveau 2', icon: '⭐' },
+          { id: 'trainer', label: 'Dresseurs', icon: '🎒' },
+          { id: 'energy', label: 'Énergies', icon: '🔮' },
+          { id: 'ultra', label: 'Ultra / ex', icon: '👑' },
+        ].map(cat => (
+          <button
+            key={cat.id}
+            onClick={() => setSelectedCategory(cat.id)}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              selectedCategory === cat.id
+                ? 'bg-red-600 text-white shadow-md shadow-red-600/30'
+                : 'bg-slate-900/90 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <span>{cat.icon}</span>
+            <span>{cat.label}</span>
+          </button>
+        ))}
+      </div>
+
       {/* Cards Grid */}
       {filteredCards.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {filteredCards.map((item) => (
-            <div
-              key={item.id}
-              className="group relative rounded-2xl bg-slate-900 border border-slate-800 hover:border-red-500/50 p-3 shadow-xl transition-all hover:-translate-y-1 flex flex-col justify-between"
-            >
-              {/* Image Box */}
-              <div 
-                onClick={() => onSelectCard(item)}
-                className="cursor-pointer relative aspect-[63/88] rounded-xl overflow-hidden bg-slate-950 mb-2.5"
+          {filteredCards.map((item) => {
+            const catInfo = item.categoryInfo || getCardCategoryInfo(item);
+            return (
+              <div
+                key={item.id}
+                className="group relative rounded-2xl bg-slate-900 border border-slate-800 hover:border-red-500/50 p-3 shadow-xl transition-all hover:-translate-y-1 flex flex-col justify-between"
               >
-                <img
-                  src={item.image || item.userPhoto}
-                  alt={item.name}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  loading="lazy"
-                />
-                <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500 text-slate-950 font-black shadow-md">
-                  {item.priceEur.toFixed(2)} €
-                </span>
-                <span className="absolute bottom-1.5 left-1.5 text-[9px] px-1.5 py-0.5 rounded bg-slate-950/80 text-slate-300 font-mono">
-                  #{item.localId}
-                </span>
-              </div>
-
-              {/* Card Meta & Actions */}
-              <div>
-                <h4 
+                {/* Image Box */}
+                <div 
                   onClick={() => onSelectCard(item)}
-                  className="cursor-pointer font-bold text-xs text-white truncate group-hover:text-red-400 transition-colors"
+                  className="cursor-pointer relative aspect-[63/88] rounded-xl overflow-hidden bg-slate-950 mb-2.5"
                 >
-                  {item.name}
-                </h4>
-                <p className="text-[10px] text-slate-400 truncate">
-                  {item.set?.name || 'Série'} • {item.condition}
-                </p>
-
-                {/* Delete button */}
-                <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-800">
-                  <span className="text-[9px] text-slate-500">
-                    {new Date(item.scannedAt).toLocaleDateString('fr-FR')}
+                  <img
+                    src={item.image || item.userPhoto}
+                    alt={item.name}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    loading="lazy"
+                  />
+                  <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-500 text-slate-950 font-black shadow-md">
+                    {item.priceEur.toFixed(2)} €
                   </span>
-                  <button
-                    onClick={() => onRemoveCard(item.id)}
-                    title="Supprimer de la collection"
-                    className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                  <span className="absolute bottom-1.5 left-1.5 text-[9px] px-1.5 py-0.5 rounded bg-slate-950/80 text-slate-300 font-mono">
+                    #{item.localId}
+                  </span>
+                  <span className={`absolute top-1.5 left-1.5 text-[8px] sm:text-[9px] px-1.5 py-0.2 rounded font-bold backdrop-blur-md border ${catInfo.chipClass}`}>
+                    {catInfo.badge}
+                  </span>
+                </div>
+
+                {/* Card Meta & Actions */}
+                <div>
+                  <h4 
+                    onClick={() => onSelectCard(item)}
+                    className="cursor-pointer font-bold text-xs text-white truncate group-hover:text-red-400 transition-colors"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                    {item.name}
+                  </h4>
+                  <p className="text-[10px] text-slate-400 truncate">
+                    {item.set?.name || 'Série'} • {catInfo.label}
+                  </p>
+
+                  {/* Delete button */}
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-800">
+                    <span className="text-[9px] text-slate-500">
+                      {new Date(item.scannedAt).toLocaleDateString('fr-FR')}
+                    </span>
+                    <button
+                      onClick={() => onRemoveCard(item.id)}
+                      title="Supprimer de la collection"
+                      className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center p-12 text-center text-slate-400 bg-slate-900/40 rounded-3xl border border-slate-800">

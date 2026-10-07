@@ -396,6 +396,194 @@ export async function searchCardsLive(query) {
 }
 
 /**
+ * Get Normalized Card Category, Evolution Stage, Badges and Colors
+ */
+export function getCardCategoryInfo(card) {
+  if (!card) return { category: 'Pokémon', stage: 'Base', badge: '⚡ BASE', color: '#10b981', label: 'Base', chipClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' };
+
+  const catRaw = (card.category || '').toLowerCase();
+  const stageRaw = (card.stage || '').toLowerCase();
+  const name = (card.name || '').toLowerCase();
+  const itemType = (card.item?.name || card.trainerType || card.energyType || '').toLowerCase();
+
+  // 1. Énergies / Energy
+  if (catRaw === 'energy' || catRaw === 'énergie' || catRaw.includes('energie') || name.includes('énergie') || name.includes('energy')) {
+    if (stageRaw.includes('special') || stageRaw.includes('spéciale') || itemType.includes('special') || name.includes('spéciale') || name.includes('special')) {
+      return {
+        category: 'Énergie',
+        stage: 'Spéciale',
+        label: 'Énergie Spéciale',
+        badge: '🔮 ÉNERGIE SPÉCIALE',
+        color: '#8b5cf6',
+        chipClass: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+      };
+    }
+    return {
+      category: 'Énergie',
+      stage: 'Base',
+      label: 'Énergie de Base',
+      badge: '⚡ ÉNERGIE DE BASE',
+      color: '#eab308',
+      chipClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30'
+    };
+  }
+
+  // 2. Dresseurs / Trainers
+  if (catRaw === 'trainer' || catRaw === 'dresseur' || name.includes('dresseur') || card.trainerType) {
+    if (stageRaw.includes('supporter') || itemType.includes('supporter') || name.includes('supporter')) {
+      return {
+        category: 'Dresseur',
+        stage: 'Supporter',
+        label: 'Dresseur - Supporter',
+        badge: '🎒 SUPPORTER',
+        color: '#f59e0b',
+        chipClass: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+      };
+    }
+    if (stageRaw.includes('item') || stageRaw.includes('objet') || itemType.includes('item') || itemType.includes('objet')) {
+      return {
+        category: 'Dresseur',
+        stage: 'Objet',
+        label: 'Dresseur - Objet',
+        badge: '🧪 OBJET',
+        color: '#0ea5e9',
+        chipClass: 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+      };
+    }
+    if (stageRaw.includes('stadium') || stageRaw.includes('stade') || itemType.includes('stadium') || itemType.includes('stade')) {
+      return {
+        category: 'Dresseur',
+        stage: 'Stade',
+        label: 'Dresseur - Stade',
+        badge: '🏟️ STADE',
+        color: '#10b981',
+        chipClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+      };
+    }
+    if (stageRaw.includes('tool') || stageRaw.includes('outil') || itemType.includes('tool')) {
+      return {
+        category: 'Dresseur',
+        stage: 'Outil',
+        label: 'Dresseur - Outil Pokémon',
+        badge: '🔧 OUTIL',
+        color: '#a855f7',
+        chipClass: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+      };
+    }
+    if (stageRaw.includes('high-tech') || stageRaw.includes('ace spec') || itemType.includes('ace')) {
+      return {
+        category: 'Dresseur',
+        stage: 'High-Tech',
+        label: 'Dresseur - High-Tech',
+        badge: '💎 HIGH-TECH',
+        color: '#ec4899',
+        chipClass: 'bg-pink-500/20 text-pink-300 border-pink-500/30'
+      };
+    }
+    return {
+      category: 'Dresseur',
+      stage: 'Dresseur',
+      label: 'Dresseur',
+      badge: '🎒 DRESSEUR',
+      color: '#f59e0b',
+      chipClass: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+    };
+  }
+
+  // 3. Pokémon Special Formats
+  if (name.includes(' vmax') || stageRaw === 'vmax') {
+    return {
+      category: 'Pokémon',
+      stage: 'VMAX',
+      label: 'Pokémon VMAX',
+      badge: '👑 POKÉMON VMAX',
+      color: '#ec4899',
+      chipClass: 'bg-pink-500/20 text-pink-300 border-pink-500/30'
+    };
+  }
+  if (name.includes(' vstar') || stageRaw === 'vstar') {
+    return {
+      category: 'Pokémon',
+      stage: 'VSTAR',
+      label: 'Pokémon VSTAR',
+      badge: '⭐ POKÉMON VSTAR',
+      color: '#eab308',
+      chipClass: 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+    };
+  }
+  if (name.endsWith(' ex') || name.includes('-ex') || name.includes(' ex ') || stageRaw === 'ex') {
+    return {
+      category: 'Pokémon',
+      stage: 'ex',
+      label: 'Pokémon ex',
+      badge: '✨ POKÉMON ex',
+      color: '#38bdf8',
+      chipClass: 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+    };
+  }
+  if (name.endsWith(' v') || stageRaw === 'v' || stageRaw === 'basic v') {
+    return {
+      category: 'Pokémon',
+      stage: 'V',
+      label: 'Pokémon V',
+      badge: '⚡ POKÉMON V',
+      color: '#8b5cf6',
+      chipClass: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+    };
+  }
+  if (stageRaw.includes('stage 2') || stageRaw.includes('stage2') || stageRaw.includes('niveau 2') || stageRaw.includes('niveau2')) {
+    return {
+      category: 'Pokémon',
+      stage: 'Niveau 2',
+      label: 'Niveau 2',
+      badge: '⭐ NIVEAU 2',
+      color: '#a855f7',
+      chipClass: 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+    };
+  }
+  if (stageRaw.includes('stage 1') || stageRaw.includes('stage1') || stageRaw.includes('niveau 1') || stageRaw.includes('niveau1') || stageRaw.includes('evolution')) {
+    return {
+      category: 'Pokémon',
+      stage: 'Niveau 1',
+      label: 'Niveau 1',
+      badge: '🔷 NIVEAU 1',
+      color: '#3b82f6',
+      chipClass: 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+    };
+  }
+  if (stageRaw.includes('baby') || stageRaw.includes('bébé')) {
+    return {
+      category: 'Pokémon',
+      stage: 'Bébé',
+      label: 'Bébé',
+      badge: '👶 BÉBÉ',
+      color: '#f472b6',
+      chipClass: 'bg-pink-500/20 text-pink-300 border-pink-500/30'
+    };
+  }
+  if (stageRaw.includes('restored') || stageRaw.includes('restauré')) {
+    return {
+      category: 'Pokémon',
+      stage: 'Restauré',
+      label: 'Restauré',
+      badge: '🦖 RESTAURÉ',
+      color: '#78716c',
+      chipClass: 'bg-stone-500/20 text-stone-300 border-stone-500/30'
+    };
+  }
+
+  // Standard Basic Pokémon
+  return {
+    category: 'Pokémon',
+    stage: 'Base',
+    label: 'Base',
+    badge: '⚡ BASE',
+    color: '#10b981',
+    chipClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+  };
+}
+
+/**
  * Format Card Data
  */
 function formatCardData(raw) {
@@ -417,13 +605,16 @@ function formatCardData(raw) {
 
   const displayPriceEur = trendPrice || avgPrice || (marketPriceUsd ? marketPriceUsd * 0.92 : 0.05);
   const grading = evaluateGradingFeasibility(raw, displayPriceEur);
+  const categoryInfo = getCardCategoryInfo(raw);
 
   return {
     id: raw.id,
     name: raw.name,
     localId: raw.localId,
     rarity: raw.rarity || 'Commune',
-    category: raw.category || 'Pokémon',
+    category: categoryInfo.category,
+    stage: categoryInfo.stage,
+    categoryInfo,
     image: raw.image ? `${raw.image}/high.webp` : (raw.image || null),
     imageLow: raw.image ? `${raw.image}/low.webp` : null,
     set: {
@@ -435,7 +626,6 @@ function formatCardData(raw) {
     },
     hp: raw.hp || null,
     types: raw.types || [],
-    stage: raw.stage || 'Base',
     illustrator: raw.illustrator || 'Inconnu',
     attacks: raw.attacks || [],
     weaknesses: raw.weaknesses || [],

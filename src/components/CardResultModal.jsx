@@ -12,10 +12,13 @@ import {
   Search,
   ChevronRight,
   Edit3,
-  Layers
+  Layers,
+  Shield,
+  Zap
 } from 'lucide-react';
 import HoloCard3D from './HoloCard3D';
 import { soundManager } from '../utils/audio';
+import { getCardCategoryInfo } from '../utils/tcgApi';
 
 export default function CardResultModal({ 
   card, 
@@ -51,6 +54,7 @@ export default function CardResultModal({
     links
   } = card;
 
+  const categoryInfo = card.categoryInfo || getCardCategoryInfo(card);
   const cm = pricing?.cardmarket || {};
   const tcg = pricing?.tcgplayer || {};
 
@@ -115,14 +119,31 @@ export default function CardResultModal({
               <Sparkles className="w-5 h-5 text-red-400" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-base sm:text-lg font-black text-white">{name}</h2>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
                   #{localId}{set?.cardCount?.official ? `/${set.cardCount.official}` : ''}
                 </span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-black tracking-wide border ${categoryInfo.chipClass}`}>
+                  {categoryInfo.badge}
+                </span>
               </div>
-              <p className="text-[11px] text-slate-400">
-                {set?.name || 'Extension'} • {rarity}
+              <p className="text-[11px] text-slate-400 flex items-center gap-1.5 flex-wrap mt-0.5">
+                <span>{set?.name || 'Extension'}</span>
+                <span>•</span>
+                <span>{rarity}</span>
+                {card.hp && (
+                  <>
+                    <span>•</span>
+                    <span className="text-red-400 font-bold font-mono">{card.hp} PV</span>
+                  </>
+                )}
+                {card.types && card.types.length > 0 && (
+                  <>
+                    <span>•</span>
+                    <span className="text-amber-300 font-semibold">{card.types.join(' / ')}</span>
+                  </>
+                )}
               </p>
             </div>
           </div>

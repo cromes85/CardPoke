@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { exportCollectionToCsv } from '../utils/storage';
+import { getCardCategoryInfo } from '../utils/tcgApi';
 
 export default function BatchRecapModal({ sessionCards, onSaveAllToCollection, onRestartScan, onClose }) {
   const [filterQuery, setFilterQuery] = useState('');
@@ -210,9 +211,14 @@ export default function BatchRecapModal({ sessionCards, onSaveAllToCollection, o
                         <h4 className="text-sm font-bold text-white truncate">
                           {item.card?.name}
                         </h4>
-                        <span className="text-xs text-slate-400 block truncate">
-                          {item.card?.set?.name} #{item.card?.localId}
-                        </span>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className={`text-[8px] px-1.5 py-0.2 rounded font-bold border ${(item.card?.categoryInfo || getCardCategoryInfo(item.card)).chipClass}`}>
+                            {(item.card?.categoryInfo || getCardCategoryInfo(item.card)).badge}
+                          </span>
+                          <span className="text-xs text-slate-400 truncate">
+                            #{item.card?.localId}
+                          </span>
+                        </div>
                         <div className="mt-1 font-black text-sm text-emerald-400">
                           {Number(item.card?.pricing?.estimatedEur || 0).toFixed(2)} €
                         </div>
@@ -265,6 +271,7 @@ export default function BatchRecapModal({ sessionCards, onSaveAllToCollection, o
             <div className="divide-y divide-slate-800/80 border border-slate-800 rounded-2xl bg-slate-950/60 overflow-hidden max-h-[38vh] overflow-y-auto">
               {processedCards.map((item, idx) => {
                 const card = item.card;
+                const catInfo = card?.categoryInfo || getCardCategoryInfo(card);
                 const price = Number(card?.pricing?.estimatedEur || 0).toFixed(2);
                 const isProfitable = card?.grading?.status === 'TRES_RENTABLE';
 
@@ -288,6 +295,9 @@ export default function BatchRecapModal({ sessionCards, onSaveAllToCollection, o
                           <h4 className="text-xs sm:text-sm font-bold text-white truncate">
                             {card?.name}
                           </h4>
+                          <span className={`text-[8px] sm:text-[9px] px-1.5 py-0.2 rounded font-bold border ${catInfo.chipClass}`}>
+                            {catInfo.badge}
+                          </span>
                           {isProfitable && (
                             <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold">
                               PÉPITE

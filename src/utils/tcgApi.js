@@ -1,4 +1,4 @@
-// TCGdex API Client & Multi-Factor Fuzzy Matching Engine
+// TCGdex API Client & Multi-Factor Candidate Ranking Engine
 
 const API_BASE = 'https://api.tcgdex.net/v2/fr';
 
@@ -33,146 +33,142 @@ export async function getCardDetails(cardId) {
 }
 
 /**
- * Smart Multi-Factor Search Engine for Pokémon Cards
+ * High-Accuracy Multi-Factor Search Engine
  */
 export async function searchCard(params) {
-  const { name = '', localId = '', totalInSet = '', setCode = '', hp = '' } = params;
-  
-  const cleanName = name.trim();
-  const cleanId = localId.trim();
-  const cleanIdUnpadded = cleanId.replace(/^0+/, '');
-  const cleanIdPadded = cleanId.padStart(3, '0');
-  const targetTotal = parseInt(totalInSet, 10) || null;
+  const { 
+    primaryName = '', 
+    name = '',
+    candidateWords = [], 
+    extractedNumbers = [], 
+    localId = '', 
+    totalInSet = '', 
+    setCode = '' 
+  } = params;
+
+  // Aggregate words to test
+  const wordsToSearch = new Set();
+  const searchName = (primaryName || name).trim();
+  if (searchName) wordsToSearch.add(searchName);
+  for (const w of candidateWords) {
+    if (w && w.length >= 3) wordsToSearch.add(w.trim());
+  }
+
+  // Aggregate numbers to test
+  const numbersToSearch = new Set();
+  if (localId) numbersToSearch.add(localId.trim());
+  for (const n of extractedNumbers) {
+    if (n) numbersToSearch.add(String(n).trim());
+  }
+
   const mappedSetId = setCode ? (SET_ALIASES[setCode.toUpperCase()] || setCode.toLowerCase()) : null;
+  const targetTotal = parseInt(totalInSet, 10) || null;
 
-  const candidateMap = new Map(); // id -> candidate object with score
+  const candidateMap = new Map(); // id -> { card, score }
 
-  // --- Helper to add and score candidates ---
-  const addCandidates = (cards, baseBonus = 0) => {
-    if (!Array.isArray(cards)) return;
-    for (const card of cards) {
-      if (!card || !card.id) continue;
-      const score = calculateMatchScore(card, {
-        cleanName,
-        cleanId,
-        cleanIdUnpadded,
-        cleanIdPadded,
-        targetTotal,
-        mappedSetId
-      }) + baseBonus;
-
-      if (!candidateMap.has(card.id) || candidateMap.get(card.id).score < score) {
-        candidateMap.set(card.id, { card, score });
-      }
-    }
-  };
-
-  // --- 1. Query by localId (Padded & Unpadded) ---
-  if (cleanId) {
+  // 1. Fetch by Candidate Numbers
+  for (const num of Array.from(numbersToSearch).slice(0, 6)) {
     try {
-      const idsToTry = Array.from(new Set([cleanId, cleanIdUnpadded, cleanIdPadded])).filter(Boolean);
-      for (const idTry of idsToTry) {
-        const res = await fetch(`${API_BASE}/cards?localId=${encodeURIComponent(idTry)}`);
-        if (res.ok) {
-          const list = await res.json();
-          addCandidates(list, 15);
-        }
+      const cleanNum = num.replace(/^0+/, '');
+      const paddedNum = num.padStart(3, '0');
+      
+      const [res1, res2] = await Promise.all([
+        fetch(`${API_BASE}/cards?localId=${encodeURIComponent(cleanNum)}`),
+        cleanNum !== paddedNum ? fetch(`${API_BASE}/cards?localId=${encodeURIComponent(paddedNum)}`) : Promise.resolve({ ok: false })
+      ]);
+
+      if (res1.ok) {
+        const list = await res1.json();
+        for (const card of list) scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId });
+      }
+      if (res2.ok) {
+        const list = await res2.json();
+        for (const card of list) scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId });
       }
     } catch (e) {
-      console.warn("LocalId search error:", e);
+      console.warn("Number query error:", e);
     }
   }
 
-  // --- 2. Query by Full Name & First Word ---
-  if (cleanName) {
+  // 2. Fetch by Candidate Words
+  for (const word of Array.from(wordsToSearch).slice(0, 5)) {
     try {
-      // Try full name
-      let res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(cleanName)}`);
+      const res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(word)}`);
       if (res.ok) {
         const list = await res.json();
-        addCandidates(list, 20);
-      }
-
-      // Try first word if multi-word (e.g. "Amos" from "Amos de la Team Rocket", "Sorboul" from "Sorboul de N")
-      const words = cleanName.split(/\s+/).filter(w => w.length >= 3);
-      if (words.length > 1) {
-        const firstWord = words[0];
-        res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(firstWord)}`);
-        if (res.ok) {
-          const list = await res.json();
-          addCandidates(list, 10);
-        }
+        for (const card of list) scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId });
       }
     } catch (e) {
-      console.warn("Name search error:", e);
+      console.warn("Word query error:", e);
     }
   }
 
-  // Convert candidates to sorted list
-  const sortedCandidates = Array.from(candidateMap.values())
+  // Sort candidates by total score
+  const sorted = Array.from(candidateMap.values())
     .sort((a, b) => b.score - a.score)
     .map(c => c.card);
 
-  if (sortedCandidates.length === 0) {
+  if (sorted.length === 0) {
     return null;
   }
 
-  // Fetch full details for the highest scoring card
-  const bestMatch = await getCardDetails(sortedCandidates[0].id);
+  // Fetch full details for the top match
+  const bestMatch = await getCardDetails(sorted[0].id);
 
   return {
     bestMatch,
-    alternatives: sortedCandidates.slice(1, 8),
+    alternatives: sorted.slice(1, 8),
     meta: {
-      recognizedName: cleanName,
-      recognizedId: cleanId,
+      recognizedName: searchName,
+      recognizedId: localId,
       recognizedTotal: totalInSet,
       recognizedSetCode: setCode
     }
   };
 }
 
-/**
- * Calculates Multi-Factor Match Score (0 to 100)
- */
-function calculateMatchScore(card, target) {
-  let score = 0;
-  const cardName = (card.name || '').toLowerCase();
-  const targetName = (target.cleanName || '').toLowerCase();
-  const cardId = String(card.localId || '').trim();
+function scoreAndAddCandidate(card, map, ctx) {
+  if (!card || !card.id) return;
 
-  // 1. Number Match (up to 40 pts)
-  if (target.cleanId) {
-    if (cardId === target.cleanId || cardId === target.cleanIdPadded || cardId === target.cleanIdUnpadded) {
-      score += 40;
+  const cardName = (card.name || '').toLowerCase();
+  const cardId = String(card.localId || '').trim();
+  const cleanCardId = cardId.replace(/^0+/, '');
+
+  let score = 0;
+
+  // 1. Number Score (up to 50 pts)
+  for (const num of ctx.numbersToSearch) {
+    const cleanN = String(num).replace(/^0+/, '');
+    if (cleanN === cleanCardId) {
+      score += 50;
+      break;
     }
   }
 
-  // 2. Name Match (up to 45 pts)
-  if (targetName) {
-    if (cardName === targetName) {
-      score += 45;
-    } else if (cardName.includes(targetName) || targetName.includes(cardName)) {
-      score += 35;
-    } else {
-      // Check first token / word
-      const targetFirst = targetName.split(' ')[0];
-      const cardFirst = cardName.split(' ')[0];
-      if (targetFirst && cardFirst && (targetFirst === cardFirst || cardName.includes(targetFirst))) {
-        score += 25;
-      } else {
-        const sim = stringSimilarity(cardName, targetName);
-        score += Math.round(sim * 25);
+  // 2. Name Score (up to 45 pts)
+  const targetLower = (ctx.searchName || '').toLowerCase();
+  if (targetLower && cardName === targetLower) {
+    score += 45;
+  } else if (targetLower && (cardName.includes(targetLower) || targetLower.includes(cardName))) {
+    score += 35;
+  } else {
+    for (const word of ctx.wordsToSearch) {
+      const wLower = word.toLowerCase();
+      if (cardName.includes(wLower)) {
+        score += 30;
+        break;
       }
     }
   }
 
-  // 3. Set Code / Set ID Match (up to 15 pts)
-  if (target.mappedSetId && card.id && card.id.toLowerCase().includes(target.mappedSetId)) {
-    score += 15;
+  // 3. Set Code / Series Score (up to 20 pts)
+  if (ctx.mappedSetId && card.id.toLowerCase().includes(ctx.mappedSetId)) {
+    score += 20;
   }
 
-  return score;
+  if (!map.has(card.id) || map.get(card.id).score < score) {
+    map.set(card.id, { card, score });
+  }
 }
 
 /**
@@ -182,7 +178,6 @@ export async function searchCardsLive(query) {
   if (!query || query.trim().length < 1) return [];
   const cleanQ = query.trim();
   try {
-    // If user types a number, search by localId
     if (/^\d+$/.test(cleanQ)) {
       const res = await fetch(`${API_BASE}/cards?localId=${encodeURIComponent(cleanQ)}`);
       if (res.ok) {
@@ -325,39 +320,4 @@ export function evaluateGradingFeasibility(card, rawPriceEur) {
     roi: -40,
     explanation: "Le coût de gradation (~15 €) dépasse largement la cote marchande de la carte. Même avec la note maximale 10/10, la revente couvrira difficilement les frais."
   };
-}
-
-function stringSimilarity(s1, s2) {
-  let longer = s1;
-  let shorter = s2;
-  if (s1.length < s2.length) {
-    longer = s2;
-    shorter = s1;
-  }
-  const longerLength = longer.length;
-  if (longerLength === 0) return 1.0;
-  
-  const editDistance = levenshtein(longer, shorter);
-  return (longerLength - editDistance) / longerLength;
-}
-
-function levenshtein(a, b) {
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
-    }
-  }
-  return matrix[b.length][a.length];
 }

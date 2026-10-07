@@ -1,6 +1,18 @@
 import { createWorker } from 'tesseract.js';
 import { extractAndPreprocessRoi } from './cardDetection';
 
+// Card layout words that should not be used as Pokémon name queries
+const POKEMON_STOP_WORDS = new Set([
+  'base', 'niveau', 'stage', 'dresseur', 'trainer', 'supporter', 'stade', 'objet', 'talent',
+  'faiblesse', 'resistance', 'résistance', 'retraite', 'pokemon', 'pokémon', 'evolution', 'évolution',
+  'degats', 'dégâts', 'tour', 'adversaire', 'carte', 'deck', 'main', 'pioche', 'piochez',
+  'votre', 'cette', 'joueur', 'melange', 'mélange', 'pendant', 'regle', 'règle', 'game', 'freak',
+  'nintendo', 'creatures', 'taille', 'poids', 'confiserie', 'cochon', 'mite', 'givre', 'gaz',
+  'defenseur', 'défenseur', 'utilise', 'utilisez', 'active', 'banc', 'poste', 'energie', 'énergie',
+  'incolore', 'plante', 'feu', 'eau', 'electrik', 'combat', 'obscurite', 'obscurité', 'metal', 'métal',
+  'psy', 'dragon', 'illus', 'illustrateur', 'copyright', 'edition', 'édition'
+]);
+
 class OcrService {
   constructor() {
     this.worker = null;
@@ -44,169 +56,146 @@ class OcrService {
   }
 
   /**
-   * Multi-pass OCR Scan on card canvas
+   * Comprehensive Multi-Zone OCR Scan
    */
   async scanCard(cardCanvas, onProgress = () => {}) {
     window.__onOcrProgress = onProgress;
     const worker = await this.getWorker();
 
-    // 1. Scan Top Header (Name + HP)
+    // 1. Scan Top Header Zone (Name & HP)
     onProgress(0.15);
     const topRoi = extractAndPreprocessRoi(cardCanvas, 'top_name');
     const topResult = await worker.recognize(topRoi);
     const topText = topResult.data.text || '';
 
-    // 2. Scan Bottom Footer (Card Number, Set code, total)
-    onProgress(0.50);
+    // 2. Scan Bottom Footer Zone (Card Number, Set Code)
+    onProgress(0.45);
     const bottomRoi = extractAndPreprocessRoi(cardCanvas, 'bottom_number');
     const bottomResult = await worker.recognize(bottomRoi);
     const bottomText = bottomResult.data.text || '';
 
-    // 3. Scan Inverted Bottom Footer for dark/foil cards
-    onProgress(0.75);
-    const bottomInverted = invertCanvas(bottomRoi);
-    const bottomResultInv = await worker.recognize(bottomInverted);
-    const bottomTextInv = bottomResultInv.data.text || '';
-
-    const combinedBottom = `${bottomText}\n${bottomTextInv}`;
+    // 3. Scan Full Card Canvas for Attacks & Character context
+    onProgress(0.70);
+    const fullRoi = extractAndPreprocessRoi(cardCanvas, 'full');
+    const fullResult = await worker.recognize(fullRoi);
+    const fullText = fullResult.data.text || '';
 
     onProgress(0.90);
-    const parsed = this.parseCardData(topText, combinedBottom);
+    const parsed = this.parseCardData(topText, bottomText, fullText);
     onProgress(1.0);
 
     return {
       rawTopText: topText,
-      rawBottomText: combinedBottom,
+      rawBottomText: bottomText,
+      rawFullText: fullText,
       ...parsed
     };
   }
 
   /**
-   * Smart Parser for Pokémon Card OCR Text
+   * Advanced Multi-Token & Pattern Parser
    */
-  parseCardData(topText, bottomText) {
-    let name = '';
-    let localId = '';
-    let totalInSet = '';
-    let setCode = '';
-    let hp = '';
+  parseCardData(topText, bottomText, fullText) {
+    const combined = `${topText}\n${bottomText}\n${fullText}`;
 
-    // --- 1. Parse Top (Name & HP) ---
-    const topClean = topText.replace(/\r\n/g, '\n').trim();
-    const topLines = topClean.split('\n').map(l => l.trim()).filter(Boolean);
+    // 1. Extract all number sequences (e.g. 053/217, 108/217, 201, 110, 60, etc.)
+    const numbers = new Set();
+    let localIdCandidate = '';
+    let totalInSetCandidate = '';
 
-    // HP Match (e.g. PV 110, PV 60, HP 140, PV140)
-    const hpMatch = topClean.match(/(?:PV|pv|HP|hp|Pv|Hv|P\/?V)\s*[:.]?\s*(\d{2,3})/i);
-    if (hpMatch) {
-      hp = hpMatch[1];
+    // Normalize fraction formats
+    const normalizedText = combined
+      .replace(/([0-9])\s*[Il|]\s*([0-9])/g, '$1/$2')
+      .replace(/([0-9])\s*(\/)\s*([0-9])/g, '$1/$3');
+
+    // Find fraction: XXX/YYY (e.g. 053/217, 030/217, 018/217, 093/217, 201/217)
+    const fracMatches = [...normalizedText.matchAll(/(\d{1,3})\s*\/\s*(\d{2,3})/g)];
+    if (fracMatches.length > 0) {
+      localIdCandidate = fracMatches[0][1];
+      totalInSetCandidate = fracMatches[0][2];
+      numbers.add(localIdCandidate);
+      numbers.add(totalInSetCandidate);
     }
 
-    // Extract Name candidate
+    // Collect all standalone numbers of 2-3 digits
+    const rawNumMatches = normalizedText.match(/\b\d{1,3}\b/g) || [];
+    for (const num of rawNumMatches) {
+      numbers.add(num);
+    }
+
+    // 2. Extract Set Code (ASC, MEE, ME02.5, SVP, OBF, SSP, TWM, PAL, SVI, etc.)
+    let setCodeCandidate = '';
+    const setMatch = normalizedText.match(/\b(ASC|MEE|ME02\.5|ME|SVP|OBF|SSP|TWM|PAL|SVI|PAR|TEF|SCR|PRE|MEW|LOR|ASR|BRS|FST|EVS|CRE|BST|VIV|DAA|SSH)\b/i);
+    if (setMatch) {
+      setCodeCandidate = setMatch[1].toUpperCase();
+    }
+
+    // 3. Extract Clean Candidate Word Tokens
+    const allWords = combined.match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
+    const candidateWords = [];
+    const seenWords = new Set();
+
+    for (const word of allWords) {
+      const lower = word.toLowerCase();
+      if (!POKEMON_STOP_WORDS.has(lower) && !seenWords.has(lower)) {
+        seenWords.add(lower);
+        candidateWords.push(cleanWord(word));
+      }
+    }
+
+    // 4. Primary Name Extraction from Top Header
+    const topClean = topText.replace(/\r\n/g, '\n').trim();
+    const topLines = topClean.split('\n').map(l => l.trim()).filter(Boolean);
+    let primaryName = '';
+
     for (const line of topLines) {
       let candidate = line;
-      // Skip evolution / stage lines
-      if (/^(BASE|NIVEAU|STAGE|NIV|Évolution|Evolution)/i.test(candidate)) {
-        continue;
-      }
-      
-      // Clean noise
+      if (/^(BASE|NIVEAU|STAGE|NIV|Évolution|Evolution)/i.test(candidate)) continue;
       candidate = candidate.replace(/(?:PV|pv|HP|hp|P\/?V)\s*\d+/gi, '');
       candidate = candidate.replace(/[0-9]/g, '');
       candidate = candidate.replace(/[^\w\s\séèêëàâäôöûüçîï'-]/gi, ' ').trim();
-
       if (candidate.length >= 2) {
-        name = candidate;
+        primaryName = candidate;
         break;
       }
     }
 
-    // If first loop didn't find, fallback to first non-empty line
-    if (!name && topLines.length > 0) {
-      name = topLines[0].replace(/[^\w\s\séèêëàâäôöûüçîï'-]/gi, ' ').trim();
-    }
-
-    // --- 2. Parse Bottom (Card Number XXX/YYY & Set Code) ---
-    const bottomClean = bottomText.replace(/\r\n/g, ' ').replace(/\s+/g, ' ');
-
-    // Normalize OCR number artifacts: 'O' -> '0', 'l'/'I'/'|' -> '/'
-    const normalized = bottomClean
-      .replace(/([0-9])\s*[Il|]\s*([0-9])/g, '$1/$2')
-      .replace(/([0-9])\s*(\/)\s*([0-9])/g, '$1/$3');
-
-    // Fraction Match: XXX/YYY (e.g. 053/217, 108/217, 201/217, 030/217, 018/217)
-    const fracMatch = normalized.match(/(\d{1,3})\s*\/\s*(\d{2,3})/);
-    if (fracMatch) {
-      localId = fracMatch[1];
-      totalInSet = fracMatch[2];
-    } else {
-      // Look for standalone numbers like "008", "053", "108"
-      const numMatch = normalized.match(/\b(\d{2,3})\b/);
-      if (numMatch) {
-        localId = numMatch[1];
-      }
-    }
-
-    // Set code pattern (ASC, MEE, ME02.5, SVP, OBF, SSP, TWM, PAL, SVI, etc.)
-    const setMatch = normalized.match(/\b(ASC|MEE|ME|SVP|OBF|SSP|TWM|PAL|SVI|PAR|TEF|SCR|PRE|MEW|LOR|ASR|BRS|FST|EVS|CRE|BST|VIV|DAA|SSH)\b/i);
-    if (setMatch) {
-      setCode = setMatch[1].toUpperCase();
+    if (!primaryName && candidateWords.length > 0) {
+      primaryName = candidateWords[0];
     }
 
     return {
-      name: cleanPokemonName(name),
-      localId: localId.trim(),
-      totalInSet: totalInSet.trim(),
-      setCode,
-      hp
+      primaryName: cleanWord(primaryName),
+      candidateWords,
+      extractedNumbers: Array.from(numbers),
+      localId: localIdCandidate,
+      totalInSet: totalInSetCandidate,
+      setCode: setCodeCandidate
     };
   }
 }
 
-// Invert canvas colors for dual-pass OCR
-function invertCanvas(srcCanvas) {
-  const canvas = document.createElement('canvas');
-  canvas.width = srcCanvas.width;
-  canvas.height = srcCanvas.height;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(srcCanvas, 0, 0);
-
-  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = imgData.data;
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = 255 - data[i];
-    data[i + 1] = 255 - data[i + 1];
-    data[i + 2] = 255 - data[i + 2];
-  }
-  ctx.putImageData(imgData, 0, 0);
-  return canvas;
-}
-
-// Clean and normalize recognized Pokémon names
-function cleanPokemonName(rawName) {
-  if (!rawName) return '';
-  let clean = rawName
-    .replace(/\s+/g, ' ')
-    .replace(/^(Base|Niveau|Stage)\s*\d*/i, '')
-    .trim();
-
-  // Dictionary of frequent Pokémon corrections
-  const CORRECTIONS = {
+function cleanWord(str) {
+  if (!str) return '';
+  let clean = str.replace(/[^\w\s\séèêëàâäôöûüçîï'-]/gi, ' ').trim();
+  
+  // Specific common Pokémon typo fixes
+  const TYPO_MAP = {
     'croudon': 'Groudon',
     'groudan': 'Groudon',
     'beldeneiqe': 'Beldeneige',
     'beideneige': 'Beldeneige',
     'grotichan': 'Grotichon',
+    'grotichont': 'Grotichon',
     'tissenbouie': 'Tissenboule',
-    'sorboul': 'Sorboul',
     'sucroguin': 'Sucroquin',
-    'fantominus': 'Fantominus',
     'fantomlnus': 'Fantominus'
   };
 
   const lower = clean.toLowerCase();
-  for (const [typo, fixed] of Object.entries(CORRECTIONS)) {
+  for (const [typo, fix] of Object.entries(TYPO_MAP)) {
     if (lower.includes(typo)) {
-      clean = clean.replace(new RegExp(typo, 'gi'), fixed);
+      clean = clean.replace(new RegExp(typo, 'gi'), fix);
     }
   }
 

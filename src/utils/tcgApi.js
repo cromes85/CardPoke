@@ -1,28 +1,33 @@
-// TCGdex API Client & Multi-Factor Candidate Ranking Engine
+// TCGdex API Client & Multi-Language Candidate Ranking Engine
 
-const API_BASE = 'https://api.tcgdex.net/v2/fr';
+const API_FR = 'https://api.tcgdex.net/v2/fr';
+const API_EN = 'https://api.tcgdex.net/v2/en';
 
 const SET_ALIASES = {
+  'PAL': 'sv02',   // Évolutions à Paldea / Paldea Evolved
   'ASC': 'me02.5', // Héros Transcendants
   'MEE': 'mee',    // Mega Evolution Energies
-  'SSP': 'sv08',   // Étincelles Radieuses
-  'SCR': 'sv07',   // Couronne Stellaire
-  'TWM': 'sv06',   // Mascarade Crépusculaire
-  'TEF': 'sv05',   // Forces Temporelles
-  'PAF': 'sv04.5', // Destinées de Paldea
-  'PAR': 'sv04',   // Faille Paradoxe
+  'SSP': 'sv08',   // Étincelles Radieuses / Surging Sparks
+  'SCR': 'sv07',   // Couronne Stellaire / Stellar Crown
+  'TWM': 'sv06',   // Mascarade Crépusculaire / Twilight Masquerade
+  'TEF': 'sv05',   // Forces Temporelles / Temporal Forces
+  'PAF': 'sv04.5', // Destinées de Paldea / Paldean Fates
+  'PAR': 'sv04',   // Faille Paradoxe / Paradox Rift
   'MEW': 'sv03.5', // 151
-  'OBF': 'sv03',   // Flammes Obsidiennes
-  'PAL': 'sv02',   // Évolutions à Paldea
-  'SVI': 'sv01',   // Écarlate et Violet
+  'OBF': 'sv03',   // Flammes Obsidiennes / Obsidian Flames
+  'SVI': 'sv01',   // Écarlate et Violet / Scarlet & Violet
 };
 
 /**
- * Fetch detailed card information by ID from TCGdex
+ * Fetch detailed card information by ID from TCGdex (French version with Euro pricing)
  */
 export async function getCardDetails(cardId) {
   try {
-    const res = await fetch(`${API_BASE}/cards/${cardId}`);
+    let res = await fetch(`${API_FR}/cards/${cardId}`);
+    if (!res.ok) {
+      // Fallback to English endpoint if not in French
+      res = await fetch(`${API_EN}/cards/${cardId}`);
+    }
     if (!res.ok) throw new Error(`Card not found: ${cardId}`);
     const data = await res.json();
     return formatCardData(data);
@@ -33,7 +38,7 @@ export async function getCardDetails(cardId) {
 }
 
 /**
- * High-Accuracy Multi-Factor Search Engine
+ * High-Accuracy Multi-Factor Search Engine (FR + EN)
  */
 export async function searchCard(params) {
   const { 
@@ -46,7 +51,6 @@ export async function searchCard(params) {
     setCode = '' 
   } = params;
 
-  // Aggregate words to test
   const wordsToSearch = new Set();
   const searchName = (primaryName || name).trim();
   if (searchName) wordsToSearch.add(searchName);
@@ -54,7 +58,6 @@ export async function searchCard(params) {
     if (w && w.length >= 3) wordsToSearch.add(w.trim());
   }
 
-  // Aggregate numbers to test
   const numbersToSearch = new Set();
   if (localId) numbersToSearch.add(localId.trim());
   for (const n of extractedNumbers) {
@@ -66,44 +69,49 @@ export async function searchCard(params) {
 
   const candidateMap = new Map(); // id -> { card, score }
 
-  // 1. Fetch by Candidate Numbers
-  for (const num of Array.from(numbersToSearch).slice(0, 6)) {
-    try {
-      const cleanNum = num.replace(/^0+/, '');
-      const paddedNum = num.padStart(3, '0');
-      
-      const [res1, res2] = await Promise.all([
-        fetch(`${API_BASE}/cards?localId=${encodeURIComponent(cleanNum)}`),
-        cleanNum !== paddedNum ? fetch(`${API_BASE}/cards?localId=${encodeURIComponent(paddedNum)}`) : Promise.resolve({ ok: false })
-      ]);
+  const searchEndpoints = [API_FR, API_EN];
 
-      if (res1.ok) {
-        const list = await res1.json();
-        for (const card of list) scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId });
-      }
-      if (res2.ok) {
-        const list = await res2.json();
-        for (const card of list) scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId });
-      }
-    } catch (e) {
-      console.warn("Number query error:", e);
-    }
-  }
-
-  // 2. Fetch by Candidate Words
+  // --- 1. Query by Candidate Words (Primary Name & Key Words) ---
   for (const word of Array.from(wordsToSearch).slice(0, 5)) {
-    try {
-      const res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(word)}`);
-      if (res.ok) {
-        const list = await res.json();
-        for (const card of list) scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId });
+    for (const endpoint of searchEndpoints) {
+      try {
+        const res = await fetch(`${endpoint}/cards?name=${encodeURIComponent(word)}`);
+        if (res.ok) {
+          const list = await res.json();
+          for (const card of list) {
+            scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId });
+          }
+        }
+      } catch (e) {
+        console.warn("Word query error:", e);
       }
-    } catch (e) {
-      console.warn("Word query error:", e);
     }
   }
 
-  // Sort candidates by total score
+  // --- 2. Query by Candidate Numbers (063, 63, 030, 201, 108, etc.) ---
+  for (const num of Array.from(numbersToSearch).slice(0, 6)) {
+    const cleanNum = num.replace(/^0+/, '');
+    const paddedNum = num.padStart(3, '0');
+    const numsToTry = Array.from(new Set([cleanNum, paddedNum])).filter(Boolean);
+
+    for (const idTry of numsToTry) {
+      for (const endpoint of searchEndpoints) {
+        try {
+          const res = await fetch(`${endpoint}/cards?localId=${encodeURIComponent(idTry)}`);
+          if (res.ok) {
+            const list = await res.json();
+            for (const card of list) {
+              scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId });
+            }
+          }
+        } catch (e) {
+          console.warn("Number query error:", e);
+        }
+      }
+    }
+  }
+
+  // Sort candidates by score descending
   const sorted = Array.from(candidateMap.values())
     .sort((a, b) => b.score - a.score)
     .map(c => c.card);
@@ -130,13 +138,38 @@ export async function searchCard(params) {
 function scoreAndAddCandidate(card, map, ctx) {
   if (!card || !card.id) return;
 
-  const cardName = (card.name || '').toLowerCase();
+  const cardName = (card.name || '').toLowerCase().replace(/[-_]/g, ' ');
   const cardId = String(card.localId || '').trim();
   const cleanCardId = cardId.replace(/^0+/, '');
 
   let score = 0;
 
-  // 1. Number Score (up to 50 pts)
+  // 1. Name Match (CRITICAL: up to 90 pts)
+  const targetLower = (ctx.searchName || '').toLowerCase().replace(/[-_]/g, ' ');
+  if (targetLower) {
+    if (cardName === targetLower || cardName.startsWith(targetLower)) {
+      score += 90;
+    } else if (cardName.includes(targetLower) || targetLower.includes(cardName)) {
+      score += 70;
+    } else {
+      const firstTargetWord = targetLower.split(' ')[0];
+      const firstCardWord = cardName.split(' ')[0];
+      if (firstTargetWord && firstCardWord && (firstTargetWord === firstCardWord || cardName.includes(firstTargetWord))) {
+        score += 55;
+      }
+    }
+  }
+
+  // Check against other candidate words (e.g. attacks or character names)
+  for (const word of ctx.wordsToSearch) {
+    const wLower = word.toLowerCase();
+    if (cardName.includes(wLower)) {
+      score += 40;
+      break;
+    }
+  }
+
+  // 2. Number Match (up to 50 pts)
   for (const num of ctx.numbersToSearch) {
     const cleanN = String(num).replace(/^0+/, '');
     if (cleanN === cleanCardId) {
@@ -145,25 +178,9 @@ function scoreAndAddCandidate(card, map, ctx) {
     }
   }
 
-  // 2. Name Score (up to 45 pts)
-  const targetLower = (ctx.searchName || '').toLowerCase();
-  if (targetLower && cardName === targetLower) {
-    score += 45;
-  } else if (targetLower && (cardName.includes(targetLower) || targetLower.includes(cardName))) {
-    score += 35;
-  } else {
-    for (const word of ctx.wordsToSearch) {
-      const wLower = word.toLowerCase();
-      if (cardName.includes(wLower)) {
-        score += 30;
-        break;
-      }
-    }
-  }
-
-  // 3. Set Code / Series Score (up to 20 pts)
+  // 3. Set Code / Series Match (up to 30 pts)
   if (ctx.mappedSetId && card.id.toLowerCase().includes(ctx.mappedSetId)) {
-    score += 20;
+    score += 30;
   }
 
   if (!map.has(card.id) || map.get(card.id).score < score) {
@@ -179,14 +196,14 @@ export async function searchCardsLive(query) {
   const cleanQ = query.trim();
   try {
     if (/^\d+$/.test(cleanQ)) {
-      const res = await fetch(`${API_BASE}/cards?localId=${encodeURIComponent(cleanQ)}`);
+      const res = await fetch(`${API_FR}/cards?localId=${encodeURIComponent(cleanQ)}`);
       if (res.ok) {
         const list = await res.json();
         return list.slice(0, 15);
       }
     }
 
-    const res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(cleanQ)}`);
+    const res = await fetch(`${API_FR}/cards?name=${encodeURIComponent(cleanQ)}`);
     if (!res.ok) return [];
     const list = await res.json();
     return list.slice(0, 15);
@@ -269,6 +286,7 @@ export function evaluateGradingFeasibility(card, rawPriceEur) {
                       rarity.includes('secret') || 
                       rarity.includes('illustration') || 
                       rarity.includes('special') ||
+                      rarity.includes('double') ||
                       rarity.includes('ar') ||
                       rarity.includes('sar');
 

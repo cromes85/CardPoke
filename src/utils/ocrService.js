@@ -1,16 +1,17 @@
 import { createWorker } from 'tesseract.js';
 import { extractAndPreprocessRoi } from './cardDetection';
 
-// Card layout words that should not be used as Pokémon name queries
-const POKEMON_STOP_WORDS = new Set([
-  'base', 'niveau', 'stage', 'dresseur', 'trainer', 'supporter', 'stade', 'objet', 'talent',
-  'faiblesse', 'resistance', 'résistance', 'retraite', 'pokemon', 'pokémon', 'evolution', 'évolution',
-  'degats', 'dégâts', 'tour', 'adversaire', 'carte', 'deck', 'main', 'pioche', 'piochez',
-  'votre', 'cette', 'joueur', 'melange', 'mélange', 'pendant', 'regle', 'règle', 'game', 'freak',
+// Non-Pokémon layout words and file noise to filter out
+const STOP_WORDS = new Set([
+  'base', 'basic', 'niveau', 'stage', 'dresseur', 'trainer', 'supporter', 'stade', 'stadium', 'item', 'objet', 'talent', 'ability',
+  'faiblesse', 'weakness', 'resistance', 'résistance', 'retraite', 'retreat', 'pokemon', 'pokémon', 'evolution', 'évolution',
+  'degats', 'dégâts', 'damage', 'tour', 'turn', 'adversaire', 'opponent', 'carte', 'card', 'deck', 'hand', 'main', 'pioche', 'piochez', 'draw',
+  'votre', 'your', 'cette', 'this', 'joueur', 'player', 'melange', 'mélange', 'shuffle', 'pendant', 'during', 'regle', 'règle', 'rule', 'game', 'freak',
   'nintendo', 'creatures', 'taille', 'poids', 'confiserie', 'cochon', 'mite', 'givre', 'gaz',
-  'defenseur', 'défenseur', 'utilise', 'utilisez', 'active', 'banc', 'poste', 'energie', 'énergie',
-  'incolore', 'plante', 'feu', 'eau', 'electrik', 'combat', 'obscurite', 'obscurité', 'metal', 'métal',
-  'psy', 'dragon', 'illus', 'illustrateur', 'copyright', 'edition', 'édition'
+  'defenseur', 'défenseur', 'utilise', 'utilisez', 'active', 'banc', 'bench', 'poste', 'energie', 'énergie', 'energy',
+  'incolore', 'colorless', 'plante', 'grass', 'feu', 'fire', 'eau', 'water', 'lightning', 'electrik', 'combat', 'fighting', 'obscurite', 'obscurité', 'darkness', 'metal', 'métal', 'steel',
+  'psy', 'psychic', 'dragon', 'illus', 'illustrator', 'illustrateur', 'copyright', 'edition', 'édition',
+  'flip', 'coin', 'tails', 'heads', 'discard', 'takes', 'prize', 'prizes'
 ]);
 
 class OcrService {
@@ -39,7 +40,7 @@ class OcrService {
         });
         
         await worker.setParameters({
-          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzéèêëàâäôöûüçîï/\'-. ',
+          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzéèêëàâäôöûüçîï/\'-.@ ',
         });
 
         this.worker = worker;
@@ -74,7 +75,7 @@ class OcrService {
     const bottomResult = await worker.recognize(bottomRoi);
     const bottomText = bottomResult.data.text || '';
 
-    // 3. Scan Full Card Canvas for Attacks & Character context
+    // 3. Scan Full Card for complete context (attacks, symbols)
     onProgress(0.70);
     const fullRoi = extractAndPreprocessRoi(cardCanvas, 'full');
     const fullResult = await worker.recognize(fullRoi);
@@ -93,22 +94,20 @@ class OcrService {
   }
 
   /**
-   * Advanced Multi-Token & Pattern Parser
+   * Advanced Multi-Token & Pattern Parser with Noise Rejection
    */
   parseCardData(topText, bottomText, fullText) {
     const combined = `${topText}\n${bottomText}\n${fullText}`;
 
-    // 1. Extract all number sequences (e.g. 053/217, 108/217, 201, 110, 60, etc.)
-    const numbers = new Set();
+    // 1. Extract fraction numbers: XXX/YYY (e.g. 063/193, 053/217, 030/217, 201/217, 018/217)
     let localIdCandidate = '';
     let totalInSetCandidate = '';
+    const numbers = new Set();
 
-    // Normalize fraction formats
     const normalizedText = combined
       .replace(/([0-9])\s*[Il|]\s*([0-9])/g, '$1/$2')
       .replace(/([0-9])\s*(\/)\s*([0-9])/g, '$1/$3');
 
-    // Find fraction: XXX/YYY (e.g. 053/217, 030/217, 018/217, 093/217, 201/217)
     const fracMatches = [...normalizedText.matchAll(/(\d{1,3})\s*\/\s*(\d{2,3})/g)];
     if (fracMatches.length > 0) {
       localIdCandidate = fracMatches[0][1];
@@ -117,44 +116,58 @@ class OcrService {
       numbers.add(totalInSetCandidate);
     }
 
-    // Collect all standalone numbers of 2-3 digits
-    const rawNumMatches = normalizedText.match(/\b\d{1,3}\b/g) || [];
+    // Collect standalone 2-3 digit numbers (e.g. 190, 60, 110, 50, 063, 108)
+    const rawNumMatches = normalizedText.match(/\b\d{2,3}\b/g) || [];
     for (const num of rawNumMatches) {
       numbers.add(num);
     }
 
-    // 2. Extract Set Code (ASC, MEE, ME02.5, SVP, OBF, SSP, TWM, PAL, SVI, etc.)
+    // 2. Extract Set Code (PAL, ASC, MEE, ME02.5, SVP, OBF, SSP, TWM, SVI, PAR, TEF, SCR, MEW, LOR, etc.)
     let setCodeCandidate = '';
-    const setMatch = normalizedText.match(/\b(ASC|MEE|ME02\.5|ME|SVP|OBF|SSP|TWM|PAL|SVI|PAR|TEF|SCR|PRE|MEW|LOR|ASR|BRS|FST|EVS|CRE|BST|VIV|DAA|SSH)\b/i);
+    const setMatch = normalizedText.match(/\b(PAL|ASC|MEE|ME02\.5|ME|SVP|OBF|SSP|TWM|SVI|PAR|TEF|SCR|PRE|MEW|LOR|ASR|BRS|FST|EVS|CRE|BST|VIV|DAA|SSH)\b/i);
     if (setMatch) {
       setCodeCandidate = setMatch[1].toUpperCase();
     }
 
-    // 3. Extract Clean Candidate Word Tokens
+    // 3. Extract and Clean Candidate Words (filtering out file names, hex codes, stop words)
     const allWords = combined.match(/[A-Za-zÀ-ÿ]{3,}/g) || [];
     const candidateWords = [];
     const seenWords = new Set();
 
-    for (const word of allWords) {
+    for (const rawWord of allWords) {
+      const word = cleanWord(rawWord);
       const lower = word.toLowerCase();
-      if (!POKEMON_STOP_WORDS.has(lower) && !seenWords.has(lower)) {
-        seenWords.add(lower);
-        candidateWords.push(cleanWord(word));
+
+      // Reject file extensions, screen codes (e.g. 5323b, ed.pn, png, jpg, media)
+      if (
+        lower.length < 3 ||
+        STOP_WORDS.has(lower) ||
+        seenWords.has(lower) ||
+        /^(png|jpg|jpeg|webp|media|img|file|screen|cromes|github)$/i.test(lower) ||
+        /^[0-9a-f]{4,}$/i.test(lower) // reject hex codes
+      ) {
+        continue;
       }
+
+      seenWords.add(lower);
+      candidateWords.push(word);
     }
 
-    // 4. Primary Name Extraction from Top Header
+    // 4. Primary Pokémon Name Extraction from Top Lines
     const topClean = topText.replace(/\r\n/g, '\n').trim();
     const topLines = topClean.split('\n').map(l => l.trim()).filter(Boolean);
     let primaryName = '';
 
     for (const line of topLines) {
       let candidate = line;
-      if (/^(BASE|NIVEAU|STAGE|NIV|Évolution|Evolution)/i.test(candidate)) continue;
-      candidate = candidate.replace(/(?:PV|pv|HP|hp|P\/?V)\s*\d+/gi, '');
+      // Skip file names or stage prefixes
+      if (/^(BASE|BASIC|NIVEAU|STAGE|NIV|Évolution|Evolution|\d{4}|\w+\.pn)/i.test(candidate)) continue;
+      
+      candidate = candidate.replace(/(?:PV|pv|HP|hp|P\/?V|H\/?P)\s*\d+/gi, '');
       candidate = candidate.replace(/[0-9]/g, '');
-      candidate = candidate.replace(/[^\w\s\séèêëàâäôöûüçîï'-]/gi, ' ').trim();
-      if (candidate.length >= 2) {
+      candidate = cleanWord(candidate);
+
+      if (candidate.length >= 3 && !STOP_WORDS.has(candidate.toLowerCase())) {
         primaryName = candidate;
         break;
       }
@@ -165,7 +178,7 @@ class OcrService {
     }
 
     return {
-      primaryName: cleanWord(primaryName),
+      primaryName,
       candidateWords,
       extractedNumbers: Array.from(numbers),
       localId: localIdCandidate,
@@ -177,10 +190,15 @@ class OcrService {
 
 function cleanWord(str) {
   if (!str) return '';
-  let clean = str.replace(/[^\w\s\séèêëàâäôöûüçîï'-]/gi, ' ').trim();
-  
-  // Specific common Pokémon typo fixes
+  let clean = str
+    .replace(/[@#$_]/g, '')
+    .replace(/[^\w\s\séèêëàâäôöûüçîï'-]/gi, ' ')
+    .trim();
+
+  // Known corrections
   const TYPO_MAP = {
+    'pikachuex': 'Pikachu ex',
+    'pikachu': 'Pikachu',
     'croudon': 'Groudon',
     'groudan': 'Groudon',
     'beldeneiqe': 'Beldeneige',
@@ -194,8 +212,8 @@ function cleanWord(str) {
 
   const lower = clean.toLowerCase();
   for (const [typo, fix] of Object.entries(TYPO_MAP)) {
-    if (lower.includes(typo)) {
-      clean = clean.replace(new RegExp(typo, 'gi'), fix);
+    if (lower === typo || lower.includes(typo)) {
+      return fix;
     }
   }
 

@@ -8,26 +8,34 @@ import {
   Sparkles, 
   AlertCircle, 
   CheckCircle2, 
-  RefreshCw,
-  Scan,
-  Maximize2,
-  Sliders,
-  Layers,
-  Play,
-  Square,
-  Pause,
-  Coins,
-  Flame,
-  Check
+  RefreshCw, 
+  Scan, 
+  Maximize2, 
+  Sliders, 
+  Layers, 
+  Play, 
+  Square, 
+  Pause, 
+  Coins, 
+  Flame, 
+  Check,
+  Sun,
+  SunMedium
 } from 'lucide-react';
-import { detectCardCorners, CARD_ASPECT_RATIO, warpPerspective } from '../utils/cardDetection';
+import { 
+  detectCardCorners, 
+  CARD_ASPECT_RATIO, 
+  warpPerspective,
+  analyzeLightingLevel,
+  autoEnhanceLighting
+} from '../utils/cardDetection';
 import { soundManager } from '../utils/audio';
 import { ocrService } from '../utils/ocrService';
 import { searchCard } from '../utils/tcgApi';
 
 export default function Scanner({ 
   onCardCaptured, 
-  onFinishBatchSession,
+  onFinishBatchSession, 
   isProcessing, 
   ocrProgress, 
   statusMessage 
@@ -42,6 +50,15 @@ export default function Scanner({
   const [facingMode, setFacingMode] = useState('environment'); // 'environment' or 'user'
   const [torchOn, setTorchOn] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
+
+  // Ambient Lighting Metering State
+  const [lightingInfo, setLightingInfo] = useState({ 
+    state: 'optimal', 
+    label: 'Lumière Optimale', 
+    color: '#10b981', 
+    needsBoost: false, 
+    mean: 128 
+  });
 
   // Scan Modes: 'button' | 'auto' | 'batch3d'
   const [scanMode, setScanMode] = useState('batch3d'); 
@@ -62,7 +79,7 @@ export default function Scanner({
   const lastCaptureTimeRef = useRef(0);
   const batchQueueRef = useRef([]);
 
-  // Start Camera Stream
+  // Start Camera Stream with Continuous Auto-Exposure Constraints
   const startCamera = useCallback(async () => {
     setCameraError(null);
     try {
@@ -74,8 +91,13 @@ export default function Scanner({
       const constraints = {
         video: {
           facingMode: { ideal: facingMode },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1080, min: 720 },
+          advanced: [
+            { exposureMode: 'continuous' },
+            { whiteBalanceMode: 'continuous' },
+            { focusMode: 'continuous' }
+          ]
         },
         audio: false
       };
@@ -88,6 +110,18 @@ export default function Scanner({
 
       const track = stream.getVideoTracks()[0];
       const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+      
+      // Attempt hardware dynamic auto exposure & focus locking
+      try {
+        const adv = {};
+        if (capabilities.exposureMode?.includes('continuous')) adv.exposureMode = 'continuous';
+        if (capabilities.whiteBalanceMode?.includes('continuous')) adv.whiteBalanceMode = 'continuous';
+        if (capabilities.focusMode?.includes('continuous')) adv.focusMode = 'continuous';
+        if (Object.keys(adv).length > 0) {
+          await track.applyConstraints({ advanced: [adv] });
+        }
+      } catch (e) {}
+
       setHasTorch(!!capabilities.torch);
       setHasCamera(true);
     } catch (err) {
@@ -128,7 +162,37 @@ export default function Scanner({
     };
   }, [startCamera]);
 
-  // Single Frame Capture (for Button & Auto Modes)
+  // Real-Time Ambient Lighting Monitoring Loop
+  useEffect(() => {
+    if (!hasCamera || cameraError) return;
+    const interval = setInterval(() => {
+      if (!videoRef.current || videoRef.current.readyState < 2) return;
+      try {
+        const v = videoRef.current;
+        const meterCanvas = document.createElement('canvas');
+        meterCanvas.width = 120;
+        meterCanvas.height = 120;
+        const mCtx = meterCanvas.getContext('2d', { willReadFrequently: true });
+        mCtx.drawImage(
+          v, 
+          v.videoWidth * 0.2, 
+          v.videoHeight * 0.2, 
+          v.videoWidth * 0.6, 
+          v.videoHeight * 0.6, 
+          0, 
+          0, 
+          120, 
+          120
+        );
+        const info = analyzeLightingLevel(meterCanvas);
+        setLightingInfo(info);
+      } catch (e) {}
+    }, 1200);
+
+    return () => clearInterval(interval);
+  }, [hasCamera, cameraError]);
+
+  // Single Frame Capture (for Button & Auto Modes) with Auto-Lighting Equalizer
   const captureFrame = useCallback(() => {
     if (!videoRef.current || isProcessing) return null;
     soundManager.playSnap();
@@ -140,10 +204,12 @@ export default function Scanner({
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const corners = detectCardCorners(canvas);
+    // Apply Dynamic Tone Mapping & Shadow Equalizer
+    const enhancedCanvas = autoEnhanceLighting(canvas, 0.85);
+    const corners = detectCardCorners(enhancedCanvas);
 
     onCardCaptured({
-      sourceCanvas: canvas,
+      sourceCanvas: enhancedCanvas,
       detectedCorners: corners
     });
   }, [isProcessing, onCardCaptured]);
@@ -183,15 +249,18 @@ export default function Scanner({
     setQueueCount(batchQueueRef.current.length);
 
     try {
-      // 1. Warp Perspective with Auto Corners
-      const corners = detectCardCorners(item.canvas);
-      const warped = warpPerspective(item.canvas, corners, 630, 880);
+      // 1. Equalize ambient lighting & lift dark shadows
+      const enhancedCanvas = autoEnhanceLighting(item.canvas, 0.85);
+      
+      // 2. Warp Perspective with Auto Corners
+      const corners = detectCardCorners(enhancedCanvas);
+      const warped = warpPerspective(enhancedCanvas, corners, 630, 880);
       const userPhoto = warped.toDataURL('image/jpeg', 0.82);
 
-      // 2. Run OCR in background
+      // 3. Run OCR in background
       const ocrRes = await ocrService.scanCard(warped);
 
-      // 3. Query TCGdex
+      // 4. Query TCGdex
       const searchRes = await searchCard({
         primaryName: ocrRes.primaryName,
         candidateWords: ocrRes.candidateWords,
@@ -348,7 +417,7 @@ export default function Scanner({
     }
   };
 
-  // Handle File Upload from Gallery
+  // Handle File Upload from Gallery with Auto-Lighting Equalizer
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -364,9 +433,10 @@ export default function Scanner({
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(img, 0, 0);
 
-        const corners = detectCardCorners(canvas);
+        const enhanced = autoEnhanceLighting(canvas, 0.85);
+        const corners = detectCardCorners(enhanced);
         onCardCaptured({
-          sourceCanvas: canvas,
+          sourceCanvas: enhanced,
           detectedCorners: corners
         });
       };
@@ -463,6 +533,30 @@ export default function Scanner({
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Réessayer</span>
             </button>
+          </div>
+        )}
+
+        {/* Real-time Ambient Lighting Status Badge */}
+        {hasCamera && !cameraError && (
+          <div className={`absolute z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-lg text-[10px] sm:text-[11px] font-bold transition-all ${
+            scanMode === 'batch3d' && lastScannedCard ? 'bottom-3 left-3' : 'top-3 left-3'
+          }`}>
+            <span 
+              className="w-2 h-2 rounded-full animate-pulse shrink-0" 
+              style={{ backgroundColor: lightingInfo.color || '#10b981' }} 
+            />
+            <span className="text-slate-200 truncate max-w-[130px] sm:max-w-none">
+              {lightingInfo.label}
+            </span>
+            {lightingInfo.needsBoost && hasTorch && !torchOn && (
+              <button
+                onClick={toggleTorch}
+                title="Allumer la torche pour compenser le manque de lumière"
+                className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-[9px] font-bold transition-colors"
+              >
+                + Torche
+              </button>
+            )}
           </div>
         )}
 

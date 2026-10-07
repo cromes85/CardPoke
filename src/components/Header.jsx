@@ -36,7 +36,7 @@ export default function Header({
             <h1 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-1">
               Poké<span className="text-red-500">Scan</span>
               <span className="text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-md bg-red-500/20 text-red-400 border border-red-500/30 font-semibold tracking-wide uppercase">
-                v2.8
+                v2.9
               </span>
             </h1>
             <p className="text-[9px] text-slate-400 font-medium hidden md:block">Scanner & Estimation Temps Réel</p>

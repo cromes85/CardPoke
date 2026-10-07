@@ -13,7 +13,8 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Sun
 } from 'lucide-react';
 import { 
   warpPerspective, 
@@ -22,7 +23,8 @@ import {
   orderCorners,
   snapAllCornersToEdges,
   snapPointToEdge,
-  fitCardCornersToRatio
+  fitCardCornersToRatio,
+  autoEnhanceLighting
 } from '../utils/cardDetection';
 
 export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm, onCancel }) {
@@ -141,6 +143,13 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
       { x: w - 10, y: h - 10 },
       { x: 10, y: h - 10 }
     ]);
+  };
+
+  // 1-Click AI Ambient Lighting Equalizer & Anti-Shadow Lifter
+  const handleEnhanceLighting = () => {
+    if (!workingCanvas) return;
+    const enhanced = autoEnhanceLighting(workingCanvas, 1.0);
+    setWorkingCanvas(enhanced);
   };
 
   // Nudge Selected Corner with Arrow Buttons (for ultra-precise adjustment)
@@ -324,7 +333,7 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
               <h3 className="text-white font-bold text-xs sm:text-base flex items-center gap-1.5">
                 <span>Cadrage Automatique</span>
                 <span className="text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                  v2.8
+                  v2.9
                 </span>
               </h3>
               <p className="text-[10px] sm:text-[11px] text-slate-400">
@@ -359,6 +368,14 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
             >
               <Sparkles className="w-3.5 h-3.5" />
               <span>Magnétiser Bords</span>
+            </button>
+            <button
+              onClick={handleEnhanceLighting}
+              title="Égaliser l'éclairage ambiant, déboucher les ombres et éliminer les reflets"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold border border-amber-500/40 transition-colors"
+            >
+              <Sun className="w-3.5 h-3.5" />
+              <span>Éclairage IA</span>
             </button>
             <button
               onClick={handleFitRatio}

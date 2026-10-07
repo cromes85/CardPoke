@@ -604,11 +604,161 @@ export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 
 }
 
 /**
+ * Analyze ambient lighting level & shadow distribution on a canvas
+ */
+export function analyzeLightingLevel(canvas) {
+  if (!canvas || !canvas.width || !canvas.height) {
+    return { mean: 128, state: 'optimal', label: 'Luminosité Optimale', needsBoost: false, color: '#10b981' };
+  }
+
+  const w = Math.min(canvas.width, 160);
+  const h = Math.min(canvas.height, 160);
+
+  const sampleCanvas = document.createElement('canvas');
+  sampleCanvas.width = w;
+  sampleCanvas.height = h;
+  const sCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+  sCtx.drawImage(canvas, 0, 0, w, h);
+  
+  const imgData = sCtx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  const totalPixels = w * h;
+
+  let sumLum = 0;
+  let darkPixels = 0;
+  let brightPixels = 0;
+
+  for (let i = 0; i < totalPixels; i++) {
+    const idx = i * 4;
+    const lum = (d[idx] * 299 + d[idx + 1] * 587 + d[idx + 2] * 114) / 1000;
+    sumLum += lum;
+    if (lum < 60) darkPixels++;
+    if (lum > 225) brightPixels++;
+  }
+
+  const mean = sumLum / totalPixels;
+  const darkRatio = darkPixels / totalPixels;
+  const brightRatio = brightPixels / totalPixels;
+
+  if (mean < 75 || darkRatio > 0.40) {
+    return {
+      mean: Math.round(mean),
+      state: 'low',
+      label: 'Éclairage faible / Ombres',
+      needsBoost: true,
+      color: '#f59e0b'
+    };
+  } else if (mean > 200 || brightRatio > 0.35) {
+    return {
+      mean: Math.round(mean),
+      state: 'harsh',
+      label: 'Reflets / Trop lumineux',
+      needsBoost: false,
+      color: '#ef4444'
+    };
+  } else {
+    return {
+      mean: Math.round(mean),
+      state: 'optimal',
+      label: 'Luminosité Optimale',
+      needsBoost: false,
+      color: '#10b981'
+    };
+  }
+}
+
+/**
+ * Adaptive Dynamic Lighting Equalizer & Shadow Lifter
+ * Applies dynamic tone mapping (LUT gamma correction) and contrast normalization
+ */
+export function autoEnhanceLighting(sourceCanvas, strength = 1.0) {
+  if (!sourceCanvas || !sourceCanvas.width || !sourceCanvas.height) return sourceCanvas;
+
+  const w = sourceCanvas.width;
+  const h = sourceCanvas.height;
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = w;
+  outCanvas.height = h;
+  const outCtx = outCanvas.getContext('2d', { willReadFrequently: true });
+
+  const srcCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+  const imgData = srcCtx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  const total = w * h;
+
+  // 1. Calculate Histogram & Mean Luminance
+  const hist = new Uint32Array(256);
+  let sumLum = 0;
+  for (let i = 0; i < total; i++) {
+    const idx = i * 4;
+    const lum = Math.round((d[idx] * 299 + d[idx + 1] * 587 + d[idx + 2] * 114) / 1000);
+    hist[lum]++;
+    sumLum += lum;
+  }
+  const meanLum = sumLum / total;
+
+  // 2. Determine Gamma & Contrast limits
+  // If dark (mean < 140), apply gamma curve < 1.0 to lift shadows
+  let gamma = 1.0;
+  if (meanLum < 140) {
+    gamma = Math.max(0.40, Math.min(1.0, Math.log(0.5) / Math.log(Math.max(20, meanLum) / 255)));
+    gamma = 1.0 - (1.0 - gamma) * strength;
+  } else if (meanLum > 185) {
+    // Compress overblown specular glare
+    gamma = Math.min(1.3, 1.0 + ((meanLum - 185) / 200) * strength);
+  }
+
+  // 3. Find 1st and 99th percentiles for dynamic range stretching (anti-haze)
+  let p1 = 0, p99 = 255;
+  let count = 0;
+  const p1Threshold = total * 0.01;
+  const p99Threshold = total * 0.99;
+
+  for (let i = 0; i < 256; i++) {
+    count += hist[i];
+    if (p1 === 0 && count >= p1Threshold) p1 = i;
+    if (count >= p99Threshold) { p99 = i; break; }
+  }
+  if (p99 <= p1) { p1 = 0; p99 = 255; }
+
+  // 4. Precompute 256-entry Lookup Table (LUT)
+  const lut = new Uint8ClampedArray(256);
+  const stretchRange = Math.max(1, p99 - p1);
+
+  for (let v = 0; v < 256; v++) {
+    let normalized = (v - p1) / stretchRange;
+    normalized = Math.max(0, Math.min(1, normalized));
+
+    const gammaCorrected = Math.pow(normalized, gamma);
+    const finalVal = (v * (1 - strength) + (gammaCorrected * 255) * strength);
+    lut[v] = Math.round(Math.max(0, Math.min(255, finalVal)));
+  }
+
+  // 5. Apply LUT to pixel buffer
+  const outData = outCtx.createImageData(w, h);
+  const od = outData.data;
+
+  for (let i = 0; i < total; i++) {
+    const idx = i * 4;
+    od[idx] = lut[d[idx]];         // R
+    od[idx + 1] = lut[d[idx + 1]]; // G
+    od[idx + 2] = lut[d[idx + 2]]; // B
+    od[idx + 3] = d[idx + 3];     // A
+  }
+
+  outCtx.putImageData(outData, 0, 0);
+  return outCanvas;
+}
+
+/**
  * Crop Clean ROI with Adaptive Local Binarization (Crisp 300 DPI Text for 100% OCR)
  */
 export function extractAndPreprocessRoi(cardCanvas, zone = 'full') {
-  const w = cardCanvas.width;
-  const h = cardCanvas.height;
+  // 1. Equalize ambient lighting and lift dark shadows before extraction
+  const enhancedCard = autoEnhanceLighting(cardCanvas, 0.9);
+
+  const w = enhancedCard.width;
+  const h = enhancedCard.height;
   
   let roiX = 0, roiY = 0, roiW = w, roiH = h;
   
@@ -633,7 +783,7 @@ export function extractAndPreprocessRoi(cardCanvas, zone = 'full') {
   const ctx = roiCanvas.getContext('2d', { willReadFrequently: true });
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(cardCanvas, roiX, roiY, roiW, roiH, 0, 0, roiCanvas.width, roiCanvas.height);
+  ctx.drawImage(enhancedCard, roiX, roiY, roiW, roiH, 0, 0, roiCanvas.width, roiCanvas.height);
 
   // Apply Adaptive Local Thresholding to remove shadows & color backgrounds
   if (zone === 'top_name' || zone === 'bottom_number') {

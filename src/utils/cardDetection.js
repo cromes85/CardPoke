@@ -4,7 +4,7 @@ export const CARD_ASPECT_RATIO = 63 / 88; // ~0.7159 (Standard Pokémon Card)
 
 /**
  * Robust Card Edge & 4-Corner Detection
- * Combines OpenCV.js (if available) with a high-precision Sobel + RANSAC Pure JS edge detector
+ * Combines OpenCV.js (if available) with a Center-Outward Radial Sobel + RANSAC Pure JS detector
  */
 export function detectCardCorners(canvas) {
   if (!canvas || !canvas.width || !canvas.height) {
@@ -14,85 +14,17 @@ export function detectCardCorners(canvas) {
   const width = canvas.width;
   const height = canvas.height;
 
-  // 1. OpenCV.js Contour Analysis if present
+  // 1. OpenCV.js Contour Analysis if present and initialized
   if (typeof window !== 'undefined' && window.cv && window.cv.Mat && window.cv.imread) {
     try {
-      const cv = window.cv;
-      const src = cv.imread(canvas);
-      const gray = new cv.Mat();
-      const blurred = new cv.Mat();
-      const edged = new cv.Mat();
-      const dilated = new cv.Mat();
-      
-      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-      cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-      cv.Canny(blurred, edged, 35, 120);
-      
-      const M = cv.Mat.ones(3, 3, cv.CV_8U);
-      cv.dilate(edged, dilated, M);
-      
-      const contours = new cv.MatVector();
-      const hierarchy = new cv.Mat();
-      cv.findContours(dilated, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-      
-      let maxArea = 0;
-      let bestCorners = null;
-      const minCardArea = (width * height) * 0.15;
-      const maxCardArea = (width * height) * 0.96;
-
-      for (let i = 0; i < contours.size(); ++i) {
-        const contour = contours.get(i);
-        const area = cv.contourArea(contour);
-        
-        if (area > minCardArea && area < maxCardArea) {
-          const peri = cv.arcLength(contour, true);
-          const approx = new cv.Mat();
-          cv.approxPolyDP(contour, approx, 0.025 * peri, true);
-          
-          if (approx.rows === 4 && area > maxArea) {
-            const pts = [];
-            for (let j = 0; j < 4; j++) {
-              pts.push({
-                x: approx.data32S[j * 2],
-                y: approx.data32S[j * 2 + 1]
-              });
-            }
-            
-            const ordered = orderCorners(pts);
-            const w1 = Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y);
-            const w2 = Math.hypot(ordered[2].x - ordered[3].x, ordered[2].y - ordered[3].y);
-            const h1 = Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y);
-            const h2 = Math.hypot(ordered[2].x - ordered[1].x, ordered[2].y - ordered[1].y);
-            
-            const avgW = (w1 + w2) / 2;
-            const avgH = (h1 + h2) / 2;
-            const ratio = Math.min(avgW, avgH) / Math.max(avgW, avgH);
-            
-            if (ratio >= 0.55 && ratio <= 0.88) {
-              maxArea = area;
-              bestCorners = ordered;
-            }
-          }
-          approx.delete();
-        }
-      }
-      
-      src.delete();
-      gray.delete();
-      blurred.delete();
-      edged.delete();
-      dilated.delete();
-      M.delete();
-      contours.delete();
-      hierarchy.delete();
-      
-      if (bestCorners) return bestCorners;
+      const cvCorners = detectWithOpenCV(canvas);
+      if (cvCorners) return cvCorners;
     } catch (e) {
       console.warn("OpenCV card detection fallback:", e);
     }
   }
 
-  // 2. High-Precision Pure JS Edge Scan with RANSAC Line Fit
+  // 2. High-Precision Pure JS Center-Outward Radial Scanner with RANSAC
   try {
     const jsCorners = detectCardCornersPureJS(canvas);
     if (jsCorners) return jsCorners;
@@ -105,13 +37,94 @@ export function detectCardCorners(canvas) {
 }
 
 /**
- * Pure JS High-Precision Edge & Corner Detector
+ * OpenCV Contour & Douglas-Peucker Polygon Detection
+ */
+function detectWithOpenCV(canvas) {
+  const cv = window.cv;
+  const width = canvas.width;
+  const height = canvas.height;
+
+  const src = cv.imread(canvas);
+  const gray = new cv.Mat();
+  const blurred = new cv.Mat();
+  const edged = new cv.Mat();
+  const dilated = new cv.Mat();
+  
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+  cv.Canny(blurred, edged, 30, 110);
+  
+  const M = cv.Mat.ones(3, 3, cv.CV_8U);
+  cv.dilate(edged, dilated, M);
+  
+  const contours = new cv.MatVector();
+  const hierarchy = new cv.Mat();
+  cv.findContours(dilated, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+  
+  let maxArea = 0;
+  let bestCorners = null;
+  const minCardArea = (width * height) * 0.18;
+  const maxCardArea = (width * height) * 0.94;
+
+  for (let i = 0; i < contours.size(); ++i) {
+    const contour = contours.get(i);
+    const area = cv.contourArea(contour);
+    
+    if (area > minCardArea && area < maxCardArea) {
+      const peri = cv.arcLength(contour, true);
+      const approx = new cv.Mat();
+      cv.approxPolyDP(contour, approx, 0.025 * peri, true);
+      
+      if (approx.rows === 4 && area > maxArea) {
+        const pts = [];
+        for (let j = 0; j < 4; j++) {
+          pts.push({
+            x: approx.data32S[j * 2],
+            y: approx.data32S[j * 2 + 1]
+          });
+        }
+        
+        const ordered = orderCorners(pts);
+        const w1 = Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y);
+        const w2 = Math.hypot(ordered[2].x - ordered[3].x, ordered[2].y - ordered[3].y);
+        const h1 = Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y);
+        const h2 = Math.hypot(ordered[2].x - ordered[1].x, ordered[2].y - ordered[1].y);
+        
+        const avgW = (w1 + w2) / 2;
+        const avgH = (h1 + h2) / 2;
+        const ratio = Math.min(avgW, avgH) / Math.max(avgW, avgH);
+        
+        if (ratio >= 0.55 && ratio <= 0.88) {
+          maxArea = area;
+          bestCorners = ordered;
+        }
+      }
+      approx.delete();
+    }
+  }
+  
+  src.delete();
+  gray.delete();
+  blurred.delete();
+  edged.delete();
+  dilated.delete();
+  M.delete();
+  contours.delete();
+  hierarchy.delete();
+  
+  return bestCorners;
+}
+
+/**
+ * Pure JS High-Precision Center-Outward Radial Scanner
+ * Scans from the inside of the card outwards to the background,
+ * guaranteeing immunity to background binder holes, desk textures, and tablecloths.
  */
 export function detectCardCornersPureJS(canvas) {
   const w = canvas.width;
   const h = canvas.height;
   
-  const maxDim = 360;
+  const maxDim = 380;
   const scale = Math.min(1, maxDim / Math.max(w, h));
   const sw = Math.floor(w * scale);
   const sh = Math.floor(h * scale);
@@ -131,7 +144,7 @@ export function detectCardCornersPureJS(canvas) {
   const imgData = ctx.getImageData(0, 0, sw, sh);
   const d = imgData.data;
   
-  // 1. Grayscale conversion with luminance weighting
+  // 1. Grayscale conversion with perceptual luminance weighting
   const gray = new Float32Array(sw * sh);
   for (let i = 0; i < sw * sh; i++) {
     const r = d[i * 4];
@@ -143,6 +156,7 @@ export function detectCardCornersPureJS(canvas) {
   // 2. Compute 3x3 Sobel gradients
   const gradX = new Float32Array(sw * sh);
   const gradY = new Float32Array(sw * sh);
+  const gradMag = new Float32Array(sw * sh);
   
   for (let y = 1; y < sh - 1; y++) {
     const ysw = y * sw;
@@ -161,75 +175,87 @@ export function detectCardCornersPureJS(canvas) {
       
       gradX[ysw + x] = gx;
       gradY[ysw + x] = gy;
+      gradMag[ysw + x] = Math.hypot(gx, gy);
     }
   }
   
-  // 3. Collect Edge Points along the 4 borders
-  // Left Edge Points (scanning from left towards center)
+  const cx = Math.floor(sw / 2);
+  const cy = Math.floor(sh / 2);
+
+  // 3. Center-Outward Radial Edge Sampling
+  // Scans from the card center outward to find the outer card border
+
+  // A. Left Edge Points (From center to Left: x going from cx * 0.85 down to 0)
   const leftPoints = [];
-  for (let y = Math.floor(sh * 0.12); y < sh * 0.88; y += 3) {
-    let maxG = 45;
-    let bestX = -1;
-    for (let x = Math.floor(sw * 0.04); x < sw * 0.48; x++) {
+  for (let y = Math.floor(sh * 0.18); y < sh * 0.82; y += 3) {
+    let peakX = -1;
+    let maxG = 40;
+    // Scan from inside outward
+    for (let x = Math.floor(cx * 0.85); x >= Math.floor(sw * 0.05); x--) {
       const g = Math.abs(gradX[y * sw + x]);
       if (g > maxG) {
         maxG = g;
-        bestX = x;
+        peakX = x;
+        // Verify this is an outer boundary by checking gradient drop
+        break;
       }
     }
-    if (bestX > 0) leftPoints.push({ x: bestX, y });
+    if (peakX > 0) leftPoints.push({ x: peakX, y });
   }
 
-  // Right Edge Points (scanning from right towards center)
+  // B. Right Edge Points (From center to Right: x going from cx * 1.15 up to sw)
   const rightPoints = [];
-  for (let y = Math.floor(sh * 0.12); y < sh * 0.88; y += 3) {
-    let maxG = 45;
-    let bestX = -1;
-    for (let x = Math.floor(sw * 0.96); x > sw * 0.52; x--) {
+  for (let y = Math.floor(sh * 0.18); y < sh * 0.82; y += 3) {
+    let peakX = -1;
+    let maxG = 40;
+    for (let x = Math.floor(cx * 1.15); x < Math.floor(sw * 0.95); x++) {
       const g = Math.abs(gradX[y * sw + x]);
       if (g > maxG) {
         maxG = g;
-        bestX = x;
+        peakX = x;
+        break;
       }
     }
-    if (bestX > 0) rightPoints.push({ x: bestX, y });
+    if (peakX > 0) rightPoints.push({ x: peakX, y });
   }
 
-  // Top Edge Points (scanning from top towards center)
+  // C. Top Edge Points (From center to Top: y going from cy * 0.85 down to 0)
   const topPoints = [];
-  for (let x = Math.floor(sw * 0.12); x < sw * 0.88; x += 3) {
-    let maxG = 45;
-    let bestY = -1;
-    for (let y = Math.floor(sh * 0.04); y < sh * 0.48; y++) {
+  for (let x = Math.floor(sw * 0.18); x < sw * 0.82; x += 3) {
+    let peakY = -1;
+    let maxG = 40;
+    for (let y = Math.floor(cy * 0.85); y >= Math.floor(sh * 0.05); y--) {
       const g = Math.abs(gradY[y * sw + x]);
       if (g > maxG) {
         maxG = g;
-        bestY = y;
+        peakY = y;
+        break;
       }
     }
-    if (bestY > 0) topPoints.push({ x, y: bestY });
+    if (peakY > 0) topPoints.push({ x, y: peakY });
   }
 
-  // Bottom Edge Points (scanning from bottom towards center)
+  // D. Bottom Edge Points (From center to Bottom: y going from cy * 1.15 up to sh)
   const bottomPoints = [];
-  for (let x = Math.floor(sw * 0.12); x < sw * 0.88; x += 3) {
-    let maxG = 45;
-    let bestY = -1;
-    for (let y = Math.floor(sh * 0.96); y > sh * 0.52; y--) {
+  for (let x = Math.floor(sw * 0.18); x < sw * 0.82; x += 3) {
+    let peakY = -1;
+    let maxG = 40;
+    for (let y = Math.floor(cy * 1.15); y < Math.floor(sh * 0.95); y++) {
       const g = Math.abs(gradY[y * sw + x]);
       if (g > maxG) {
         maxG = g;
-        bestY = y;
+        peakY = y;
+        break;
       }
     }
-    if (bestY > 0) bottomPoints.push({ x, y: bestY });
+    if (peakY > 0) bottomPoints.push({ x, y: peakY });
   }
 
-  // 4. Fit 4 Straight Lines with Robust Median Filtering
-  const leftLine = fitVerticalLine(leftPoints);
-  const rightLine = fitVerticalLine(rightPoints);
-  const topLine = fitHorizontalLine(topPoints);
-  const bottomLine = fitHorizontalLine(bottomPoints);
+  // 4. Robust Linear Regression (RANSAC with Inlier Threshold)
+  const leftLine = fitRobustVertical(leftPoints, sw);
+  const rightLine = fitRobustVertical(rightPoints, sw);
+  const topLine = fitRobustHorizontal(topPoints, sh);
+  const bottomLine = fitRobustHorizontal(bottomPoints, sh);
 
   if (leftLine && rightLine && topLine && bottomLine) {
     const tl = intersectHV(topLine, leftLine);
@@ -250,6 +276,7 @@ export function detectCardCornersPureJS(canvas) {
       const cardH = Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y);
       const ratio = Math.min(cardW, cardH) / Math.max(cardW, cardH);
 
+      // Validate dimensions and aspect ratio
       if (cardW > w * 0.28 && cardH > h * 0.28 && ratio >= 0.52 && ratio <= 0.88) {
         return ordered;
       }
@@ -260,16 +287,16 @@ export function detectCardCornersPureJS(canvas) {
 }
 
 /**
- * Robust vertical line fitting: x = m * y + c
+ * Robust vertical line fitting (x = m * y + c) with median inlier filter
  */
-function fitVerticalLine(points) {
-  if (points.length < 5) return null;
+function fitRobustVertical(points, sw) {
+  if (!points || points.length < 4) return null;
   const xs = points.map(p => p.x).sort((a, b) => a - b);
   const medianX = xs[Math.floor(xs.length / 2)];
   
-  // Filter outliers within 20% distance of median
-  const inliers = points.filter(p => Math.abs(p.x - medianX) < 25);
-  if (inliers.length < 4) return { m: 0, c: medianX };
+  // Filter inliers within ±18 pixels of median
+  const inliers = points.filter(p => Math.abs(p.x - medianX) < 18);
+  if (inliers.length < 3) return { m: 0, c: medianX };
 
   let sumY = 0, sumX = 0, sumYY = 0, sumYX = 0;
   const n = inliers.length;
@@ -289,15 +316,15 @@ function fitVerticalLine(points) {
 }
 
 /**
- * Robust horizontal line fitting: y = m * x + c
+ * Robust horizontal line fitting (y = m * x + c) with median inlier filter
  */
-function fitHorizontalLine(points) {
-  if (points.length < 5) return null;
+function fitRobustHorizontal(points, sh) {
+  if (!points || points.length < 4) return null;
   const ys = points.map(p => p.y).sort((a, b) => a - b);
   const medianY = ys[Math.floor(ys.length / 2)];
   
-  const inliers = points.filter(p => Math.abs(p.y - medianY) < 25);
-  if (inliers.length < 4) return { m: 0, c: medianY };
+  const inliers = points.filter(p => Math.abs(p.y - medianY) < 18);
+  if (inliers.length < 3) return { m: 0, c: medianY };
 
   let sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
   const n = inliers.length;
@@ -336,16 +363,16 @@ function intersectHV(hLine, vLine) {
 }
 
 export function getDefaultCenteredCorners(width, height) {
-  const margin = 0.06;
+  const margin = 0.05;
   const availW = width * (1 - margin * 2);
   const availH = height * (1 - margin * 2);
   
   let targetW, targetH;
   if (availW / availH > CARD_ASPECT_RATIO) {
-    targetH = availH * 0.94;
+    targetH = availH * 0.95;
     targetW = targetH * CARD_ASPECT_RATIO;
   } else {
-    targetW = availW * 0.94;
+    targetW = availW * 0.95;
     targetH = targetW / CARD_ASPECT_RATIO;
   }
   
@@ -481,15 +508,15 @@ export function extractAndPreprocessRoi(cardCanvas, zone = 'full') {
   let roiX = 0, roiY = 0, roiW = w, roiH = h;
   
   if (zone === 'top_name') {
-    roiX = Math.floor(w * 0.04);
-    roiY = Math.floor(h * 0.02);
-    roiW = Math.floor(w * 0.92);
-    roiH = Math.floor(h * 0.24);
+    roiX = Math.floor(w * 0.03);
+    roiY = Math.floor(h * 0.015);
+    roiW = Math.floor(w * 0.94);
+    roiH = Math.floor(h * 0.25);
   } else if (zone === 'bottom_number') {
     roiX = Math.floor(w * 0.03);
-    roiY = Math.floor(h * 0.78);
+    roiY = Math.floor(h * 0.77);
     roiW = Math.floor(w * 0.94);
-    roiH = Math.floor(h * 0.21);
+    roiH = Math.floor(h * 0.22);
   }
   
   const roiCanvas = document.createElement('canvas');

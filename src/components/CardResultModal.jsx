@@ -7,13 +7,11 @@ import {
   BookmarkPlus, 
   CheckCircle, 
   TrendingUp, 
-  Euro, 
-  ShieldAlert, 
-  ShieldCheck, 
-  HelpCircle,
-  RefreshCw,
   Award,
-  ChevronDown
+  RefreshCw,
+  Search,
+  ChevronRight,
+  Edit3
 } from 'lucide-react';
 import HoloCard3D from './HoloCard3D';
 import { soundManager } from '../utils/audio';
@@ -21,16 +19,22 @@ import { soundManager } from '../utils/audio';
 export default function CardResultModal({ 
   card, 
   alternatives = [], 
+  ocrMeta = {},
   userCroppedImage,
   onSaveToCollection, 
   onSelectAlternative, 
   onManualSearchFallback,
+  onUpdateSearch,
   onClose 
 }) {
   const [condition, setCondition] = useState('Near Mint');
   const [userNote, setUserNote] = useState('');
   const [isSaved, setIsSaved] = useState(false);
-  const [showAltDropdown, setShowAltDropdown] = useState(false);
+
+  // Quick Inline Edit Mode
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(card?.name || '');
+  const [editNumber, setEditNumber] = useState(card?.localId || '');
 
   if (!card) return null;
 
@@ -42,16 +46,10 @@ export default function CardResultModal({
     pricing,
     grading,
     image,
-    hp,
-    types,
-    stage,
-    attacks,
-    weaknesses,
-    illustrator,
     links
   } = card;
 
-  // Trigger celebration confetti & sound when saving or if high value
+  // Trigger celebration confetti & sound when saving
   const handleSave = () => {
     if (isSaved) return;
 
@@ -74,47 +72,96 @@ export default function CardResultModal({
     setIsSaved(true);
   };
 
+  const handleApplyEdit = (e) => {
+    e.preventDefault();
+    if (onUpdateSearch) {
+      onUpdateSearch({
+        name: editName,
+        localId: editNumber
+      });
+    }
+    setIsEditing(false);
+  };
+
   const cm = pricing?.cardmarket || {};
   const tcg = pricing?.tcgplayer || {};
 
   return (
-    <div className="fixed inset-0 z-50 backdrop-blur-md bg-slate-950/85 flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-      <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto max-h-[92vh]">
+    <div className="fixed inset-0 z-50 backdrop-blur-md bg-slate-950/90 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+      <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto max-h-[95vh]">
         
         {/* Top Modal Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/90 backdrop-blur-sm sticky top-0 z-20">
-          <div className="flex items-center gap-3">
+        <div className="p-3.5 sm:p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90 backdrop-blur-sm sticky top-0 z-20">
+          <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-2xl bg-red-500/10 text-red-400 border border-red-500/20">
               <Sparkles className="w-5 h-5 text-red-400" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg sm:text-xl font-black text-white">{name}</h2>
+                <h2 className="text-base sm:text-lg font-black text-white">{name}</h2>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono border border-slate-700">
                   #{localId}{set?.cardCount?.official ? `/${set.cardCount.official}` : ''}
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
-                {set?.name || 'Extension Pokémon'} • {rarity}
+              <p className="text-[11px] text-slate-400">
+                {set?.name || 'Extension'} • {rarity}
               </p>
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setIsEditing(!isEditing)}
+              title="Ajuster les termes recherchés"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
+            >
+              <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Corriger</span>
+            </button>
+
+            <button
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
+
+        {/* Quick Correction Bar */}
+        {isEditing && (
+          <form onSubmit={handleApplyEdit} className="p-3 bg-slate-950 border-b border-slate-800 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-400 font-medium">Recherche rapide :</span>
+            <input
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              placeholder="Nom du Pokémon..."
+              className="px-3 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-red-500"
+            />
+            <input
+              type="text"
+              value={editNumber}
+              onChange={(e) => setEditNumber(e.target.value)}
+              placeholder="N° (ex: 108)..."
+              className="w-24 px-3 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-red-500"
+            />
+            <button
+              type="submit"
+              className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition-colors"
+            >
+              Mettre à jour
+            </button>
+          </form>
+        )}
 
         {/* Modal Scrollable Body */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             
-            {/* Left Column: 3D Holographic Card */}
+            {/* Left Column: 3D Card & Alternatives */}
             <div className="lg:col-span-5 flex flex-col items-center">
-              <div className="w-full max-w-[280px]">
+              <div className="w-full max-w-[260px]">
                 <HoloCard3D
                   imageUrl={image || userCroppedImage}
                   name={name}
@@ -122,64 +169,50 @@ export default function CardResultModal({
                 />
               </div>
 
-              {/* Set Logo & Basic info */}
-              <div className="mt-4 flex items-center gap-2 p-2.5 rounded-2xl bg-slate-800/60 border border-slate-700/60 w-full max-w-[280px]">
+              {/* Set Info */}
+              <div className="mt-3 flex items-center gap-2 p-2 rounded-2xl bg-slate-800/60 border border-slate-700/60 w-full max-w-[260px]">
                 {set?.symbol && (
-                  <img src={set.symbol} alt="Symbole Série" className="w-6 h-6 object-contain" />
+                  <img src={set.symbol} alt="Symbole" className="w-5 h-5 object-contain" />
                 )}
                 <div className="text-xs truncate">
-                  <span className="text-slate-400 block text-[10px]">Extension</span>
+                  <span className="text-slate-400 block text-[9px]">Extension</span>
                   <span className="text-white font-semibold truncate block">{set?.name}</span>
                 </div>
               </div>
 
-              {/* Alternative Match Dropdown if OCR was slightly off */}
+              {/* Alternative Cards Quick Carousel */}
               {alternatives && alternatives.length > 0 && (
-                <div className="w-full max-w-[280px] mt-3">
-                  <button
-                    onClick={() => setShowAltDropdown(!showAltDropdown)}
-                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-300 text-xs font-semibold border border-slate-700/60 transition-colors"
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Autres correspondances ({alternatives.length})</span>
-                    </span>
-                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAltDropdown ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {showAltDropdown && (
-                    <div className="mt-2 space-y-1.5 p-2 rounded-xl bg-slate-950 border border-slate-800 shadow-xl">
-                      {alternatives.map((alt) => (
-                        <button
-                          key={alt.id}
-                          onClick={() => {
-                            onSelectAlternative(alt.id);
-                            setShowAltDropdown(false);
-                          }}
-                          className="w-full text-left p-2 rounded-lg hover:bg-slate-800 text-xs text-slate-300 hover:text-white flex items-center justify-between transition-colors"
-                        >
-                          <span className="truncate">{alt.name}</span>
-                          <span className="text-[10px] font-mono text-slate-400">#{alt.localId}</span>
-                        </button>
-                      ))}
+                <div className="w-full max-w-[260px] mt-4 space-y-2">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Autres versions trouvées ({alternatives.length}) :
+                  </span>
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {alternatives.map((alt) => (
                       <button
-                        onClick={onManualSearchFallback}
-                        className="w-full text-center p-1.5 text-[11px] text-red-400 hover:text-red-300 font-semibold"
+                        key={alt.id}
+                        onClick={() => onSelectAlternative(alt.id)}
+                        className="w-full text-left p-2 rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 text-xs text-slate-300 hover:text-white flex items-center justify-between transition-colors group"
                       >
-                        Rechercher manuellement
+                        <div className="truncate mr-1">
+                          <span className="font-semibold block truncate group-hover:text-red-400">{alt.name}</span>
+                          <span className="text-[10px] text-slate-500 block truncate">{alt.id}</span>
+                        </div>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-amber-400 shrink-0">
+                          #{alt.localId}
+                        </span>
                       </button>
-                    </div>
-                  )}
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* Right Column: Prices, Grading AI, Links & Stats */}
-            <div className="lg:col-span-7 space-y-5">
+            {/* Right Column: Pricing, Grading, Links & Save */}
+            <div className="lg:col-span-7 space-y-4">
               
               {/* 1. Live Market Price Box */}
               <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-br from-slate-800/80 to-slate-900 border border-slate-700/80 shadow-xl">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                     <TrendingUp className="w-4 h-4 text-emerald-400" />
                     <span>Cote Marchande en Direct</span>
@@ -190,29 +223,29 @@ export default function CardResultModal({
                 </div>
 
                 {/* Primary Estimated Price */}
-                <div className="flex items-baseline gap-2 mb-4">
+                <div className="flex items-baseline gap-2 mb-3">
                   <span className="text-3xl sm:text-4xl font-black text-white">
                     {pricing?.estimatedEur || '0.20'} €
                   </span>
                   <span className="text-xs text-slate-400 font-medium">prix moyen estimé</span>
                 </div>
 
-                {/* Grid of Detailed Sub-Prices */}
+                {/* Grid of Sub-Prices */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-slate-700/60 text-xs">
                   <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-[10px] text-slate-400 block">Prix Bas</span>
+                    <span className="text-[9px] text-slate-400 block">Prix Bas</span>
                     <span className="text-white font-bold">{cm.low ? `${cm.low} €` : 'N/A'}</span>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-[10px] text-slate-400 block">Tendance</span>
+                    <span className="text-[9px] text-slate-400 block">Tendance</span>
                     <span className="text-white font-bold">{cm.trend ? `${cm.trend} €` : 'N/A'}</span>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-[10px] text-slate-400 block">Holo / Reverse</span>
+                    <span className="text-[9px] text-slate-400 block">Holo / Reverse</span>
                     <span className="text-white font-bold">{cm.holo ? `${cm.holo} €` : 'N/A'}</span>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-[10px] text-slate-400 block">TCGPlayer (US)</span>
+                    <span className="text-[9px] text-slate-400 block">TCGPlayer (US)</span>
                     <span className="text-white font-bold">{tcg.marketUsd ? `$${tcg.marketUsd}` : 'N/A'}</span>
                   </div>
                 </div>
@@ -220,7 +253,7 @@ export default function CardResultModal({
 
               {/* 2. AI Financial Grading Valuation Card */}
               {grading && (
-                <div className={`p-4 sm:p-5 rounded-3xl border shadow-xl ${
+                <div className={`p-4 rounded-3xl border shadow-xl ${
                   grading.status === 'TRES_RENTABLE'
                     ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-200'
                     : grading.status === 'RENTABLE_SI_10'
@@ -228,11 +261,11 @@ export default function CardResultModal({
                     : 'bg-rose-950/20 border-rose-500/30 text-rose-200'
                 }`}>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Award className="w-5 h-5 text-amber-400" />
-                      <h4 className="font-bold text-sm text-white">Analyse Gradation (PSA / PCA / CGC)</h4>
+                    <div className="flex items-center gap-1.5">
+                      <Award className="w-4 h-4 text-amber-400" />
+                      <h4 className="font-bold text-xs sm:text-sm text-white">Gradation (PSA / PCA / CGC)</h4>
                     </div>
-                    <span className={`text-xs px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
                       grading.status === 'TRES_RENTABLE'
                         ? 'bg-emerald-500 text-slate-950'
                         : grading.status === 'RENTABLE_SI_10'
@@ -243,29 +276,28 @@ export default function CardResultModal({
                     </span>
                   </div>
 
-                  <p className="text-xs leading-relaxed text-slate-300 mb-4">
+                  <p className="text-[11px] leading-relaxed text-slate-300 mb-3">
                     {grading.explanation}
                   </p>
 
-                  {/* Financial Simulation Matrix */}
-                  <div className="grid grid-cols-3 gap-2 text-center text-xs pt-3 border-t border-slate-800">
-                    <div className="p-2 rounded-xl bg-slate-900/80">
-                      <span className="text-[10px] text-slate-400 block">Valeur Brute</span>
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs pt-2 border-t border-slate-800">
+                    <div className="p-1.5 rounded-lg bg-slate-900/80">
+                      <span className="text-[9px] text-slate-400 block">Valeur Brute</span>
                       <span className="text-white font-bold">{grading.estRaw.toFixed(2)} €</span>
                     </div>
-                    <div className="p-2 rounded-xl bg-slate-900/80">
-                      <span className="text-[10px] text-slate-400 block">Estimation PSA 9</span>
+                    <div className="p-1.5 rounded-lg bg-slate-900/80">
+                      <span className="text-[9px] text-slate-400 block">PSA 9</span>
                       <span className="text-white font-bold">{grading.estPsa9} €</span>
                     </div>
-                    <div className="p-2 rounded-xl bg-slate-900/80">
-                      <span className="text-[10px] text-slate-400 block">Estimation PSA 10</span>
+                    <div className="p-1.5 rounded-lg bg-slate-900/80">
+                      <span className="text-[9px] text-slate-400 block">PSA 10</span>
                       <span className="text-emerald-400 font-bold">{grading.estPsa10} €</span>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* 3. Marketplace External Links */}
+              {/* 3. External Links */}
               <div className="flex flex-wrap items-center gap-2">
                 <a
                   href={links?.cardmarket}
@@ -284,7 +316,7 @@ export default function CardResultModal({
                   className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-900/30 hover:bg-amber-900/50 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-colors"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  <span>eBay (Ventes Réussies)</span>
+                  <span>eBay Ventes</span>
                 </a>
 
                 <a
@@ -298,36 +330,36 @@ export default function CardResultModal({
                 </a>
               </div>
 
-              {/* 4. Add to Collection Form */}
-              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
+              {/* 4. Add to Collection Box */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-300">État de votre carte :</span>
+                  <span className="text-xs font-bold text-slate-300">État :</span>
                   <select
                     value={condition}
                     onChange={(e) => setCondition(e.target.value)}
                     className="bg-slate-800 text-white text-xs rounded-lg px-2.5 py-1 border border-slate-700 focus:outline-none focus:border-red-500"
                   >
                     <option value="Mint">Mint (Parfait)</option>
-                    <option value="Near Mint">Near Mint (Neuf / Quasi-neuf)</option>
-                    <option value="Excellent">Excellent (Léger whitening)</option>
-                    <option value="Good">Good (Joué)</option>
+                    <option value="Near Mint">Near Mint (Neuf)</option>
+                    <option value="Excellent">Excellent</option>
+                    <option value="Good">Good</option>
                     <option value="Lightly Played">Lightly Played</option>
-                    <option value="Poor">Poor (Abîmé / Plié)</option>
+                    <option value="Poor">Poor (Abîmé)</option>
                   </select>
                 </div>
 
                 <input
                   type="text"
-                  placeholder="Note personnelle (ex: tiré du coffret Dracaufeu)..."
+                  placeholder="Note personnelle..."
                   value={userNote}
                   onChange={(e) => setUserNote(e.target.value)}
-                  className="w-full bg-slate-900 text-slate-200 placeholder-slate-500 text-xs rounded-xl px-3 py-2 border border-slate-800 focus:outline-none focus:border-red-500"
+                  className="w-full bg-slate-900 text-slate-200 placeholder-slate-500 text-xs rounded-xl px-3 py-1.5 border border-slate-800 focus:outline-none focus:border-red-500"
                 />
 
                 <button
                   onClick={handleSave}
                   disabled={isSaved}
-                  className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm transition-all shadow-lg active:scale-95 ${
+                  className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all shadow-lg active:scale-95 ${
                     isSaved
                       ? 'bg-emerald-600 text-white cursor-default'
                       : 'bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:opacity-90 text-white shadow-red-600/30'
@@ -336,7 +368,7 @@ export default function CardResultModal({
                   {isSaved ? (
                     <>
                       <CheckCircle className="w-4 h-4" />
-                      <span>Carte Enregistrée dans la Collection !</span>
+                      <span>Carte Enregistrée !</span>
                     </>
                   ) : (
                     <>

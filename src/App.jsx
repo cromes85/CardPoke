@@ -31,6 +31,7 @@ export default function App() {
   // Result Modal State
   const [selectedCard, setSelectedCard] = useState(null);
   const [alternativeMatches, setAlternativeMatches] = useState([]);
+  const [ocrMeta, setOcrMeta] = useState({});
   const [userCroppedDataUrl, setUserCroppedDataUrl] = useState(null);
 
   // Load collection from localStorage on mount
@@ -70,7 +71,9 @@ export default function App() {
       const searchResult = await searchCard({
         name: ocrResult.name,
         localId: ocrResult.localId,
-        setCode: ocrResult.setCode
+        totalInSet: ocrResult.totalInSet,
+        setCode: ocrResult.setCode,
+        hp: ocrResult.hp
       });
 
       setIsProcessing(false);
@@ -79,9 +82,10 @@ export default function App() {
         soundManager.playSuccess();
         setSelectedCard(searchResult.bestMatch);
         setAlternativeMatches(searchResult.alternatives || []);
+        setOcrMeta(searchResult.meta || {});
       } else {
-        // Fallback: If not found automatically, open manual search with pre-filled name
-        alert(`Carte reconnue : "${ocrResult.name || 'Inconnue'}" (#${ocrResult.localId || '?'}). Recherche manuelle ouverte pour vérification.`);
+        // Fallback: If not found automatically, open manual search with pre-filled query
+        alert(`Lecture OCR : "${ocrResult.name || 'Nom non détecté'}" (#${ocrResult.localId || '?'}). Recherche manuelle ouverte pour vérification.`);
         setActiveTab('search');
       }
     } catch (err) {
@@ -98,6 +102,18 @@ export default function App() {
     setIsProcessing(false);
     if (details) {
       setSelectedCard(details);
+    }
+  };
+
+  // In-place manual query update from Result Modal
+  const handleUpdateSearch = async (params) => {
+    setIsProcessing(true);
+    const searchResult = await searchCard(params);
+    setIsProcessing(false);
+    if (searchResult && searchResult.bestMatch) {
+      setSelectedCard(searchResult.bestMatch);
+      setAlternativeMatches(searchResult.alternatives || []);
+      setOcrMeta(searchResult.meta || {});
     }
   };
 
@@ -145,7 +161,6 @@ export default function App() {
             collection={collection}
             onRemoveCard={handleRemoveFromCollection}
             onSelectCard={(item) => {
-              // Convert collection item to modal card structure
               getCardDetails(item.cardId || item.id).then(details => {
                 if (details) setSelectedCard(details);
                 else setSelectedCard(item);
@@ -181,9 +196,11 @@ export default function App() {
         <CardResultModal
           card={selectedCard}
           alternatives={alternativeMatches}
+          ocrMeta={ocrMeta}
           userCroppedImage={userCroppedDataUrl}
           onSaveToCollection={handleSaveToCollection}
           onSelectAlternative={handleSelectAlternative}
+          onUpdateSearch={handleUpdateSearch}
           onManualSearchFallback={() => {
             setSelectedCard(null);
             setActiveTab('search');

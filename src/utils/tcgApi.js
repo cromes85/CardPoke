@@ -1,21 +1,20 @@
-// TCGdex API Client & Pokémon Card Valuation Service
+// TCGdex API Client & Multi-Factor Fuzzy Matching Engine
 
 const API_BASE = 'https://api.tcgdex.net/v2/fr';
 
-// Known Set code alias mapping for recent and popular sets
 const SET_ALIASES = {
   'ASC': 'me02.5', // Héros Transcendants
   'MEE': 'mee',    // Mega Evolution Energies
-  'SSP': 'sv08',   // Étincelles Radieuses / Surging Sparks
-  'SCR': 'sv07',   // Couronne Stellaire / Stellar Crown
-  'TWM': 'sv06',   // Mascarade Crépusculaire / Twilight Masquerade
-  'TEF': 'sv05',   // Forces Temporelles / Temporal Forces
-  'PAF': 'sv04.5', // Destinées de Paldea / Paldean Fates
-  'PAR': 'sv04',   // Faille Paradoxe / Paradox Rift
+  'SSP': 'sv08',   // Étincelles Radieuses
+  'SCR': 'sv07',   // Couronne Stellaire
+  'TWM': 'sv06',   // Mascarade Crépusculaire
+  'TEF': 'sv05',   // Forces Temporelles
+  'PAF': 'sv04.5', // Destinées de Paldea
+  'PAR': 'sv04',   // Faille Paradoxe
   'MEW': 'sv03.5', // 151
-  'OBF': 'sv03',   // Flammes Obsidiennes / Obsidian Flames
-  'PAL': 'sv02',   // Évolutions à Paldea / Paldea Evolved
-  'SVI': 'sv01',   // Écarlate et Violet / Scarlet & Violet
+  'OBF': 'sv03',   // Flammes Obsidiennes
+  'PAL': 'sv02',   // Évolutions à Paldea
+  'SVI': 'sv01',   // Écarlate et Violet
 };
 
 /**
@@ -34,105 +33,165 @@ export async function getCardDetails(cardId) {
 }
 
 /**
- * Smart Search combining Name, LocalId, and Set Code
+ * Smart Multi-Factor Search Engine for Pokémon Cards
  */
 export async function searchCard(params) {
-  const { name = '', localId = '', setCode = '' } = params;
+  const { name = '', localId = '', totalInSet = '', setCode = '', hp = '' } = params;
+  
   const cleanName = name.trim();
-  const cleanNum = localId.trim().replace(/^0+/, ''); // strip leading zeros for flexible search
-  const cleanNumPadded = localId.trim().padStart(3, '0');
+  const cleanId = localId.trim();
+  const cleanIdUnpadded = cleanId.replace(/^0+/, '');
+  const cleanIdPadded = cleanId.padStart(3, '0');
+  const targetTotal = parseInt(totalInSet, 10) || null;
+  const mappedSetId = setCode ? (SET_ALIASES[setCode.toUpperCase()] || setCode.toLowerCase()) : null;
 
-  let results = [];
+  const candidateMap = new Map(); // id -> candidate object with score
 
-  // Strategy 1: Exact Name + Number
-  if (cleanName && cleanNum) {
-    try {
-      // Try both padded and unpadded localId
-      let res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(cleanName)}&localId=${cleanNum}`);
-      if (res.ok) {
-        const list = await res.json();
-        if (list && list.length > 0) results.push(...list);
+  // --- Helper to add and score candidates ---
+  const addCandidates = (cards, baseBonus = 0) => {
+    if (!Array.isArray(cards)) return;
+    for (const card of cards) {
+      if (!card || !card.id) continue;
+      const score = calculateMatchScore(card, {
+        cleanName,
+        cleanId,
+        cleanIdUnpadded,
+        cleanIdPadded,
+        targetTotal,
+        mappedSetId
+      }) + baseBonus;
+
+      if (!candidateMap.has(card.id) || candidateMap.get(card.id).score < score) {
+        candidateMap.set(card.id, { card, score });
       }
-      if (results.length === 0) {
-        res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(cleanName)}&localId=${cleanNumPadded}`);
+    }
+  };
+
+  // --- 1. Query by localId (Padded & Unpadded) ---
+  if (cleanId) {
+    try {
+      const idsToTry = Array.from(new Set([cleanId, cleanIdUnpadded, cleanIdPadded])).filter(Boolean);
+      for (const idTry of idsToTry) {
+        const res = await fetch(`${API_BASE}/cards?localId=${encodeURIComponent(idTry)}`);
         if (res.ok) {
           const list = await res.json();
-          if (list && list.length > 0) results.push(...list);
+          addCandidates(list, 15);
         }
       }
     } catch (e) {
-      console.warn("Strategy 1 error:", e);
+      console.warn("LocalId search error:", e);
     }
   }
 
-  // Strategy 2: If no result, search by Number and match Name fuzzily
-  if (results.length === 0 && cleanNum) {
+  // --- 2. Query by Full Name & First Word ---
+  if (cleanName) {
     try {
-      const res = await fetch(`${API_BASE}/cards?localId=${cleanNum}`);
+      // Try full name
+      let res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(cleanName)}`);
       if (res.ok) {
         const list = await res.json();
-        if (list && list.length > 0) {
-          // If name is present, score by name similarity
-          if (cleanName) {
-            list.sort((a, b) => {
-              const simA = stringSimilarity(a.name.toLowerCase(), cleanName.toLowerCase());
-              const simB = stringSimilarity(b.name.toLowerCase(), cleanName.toLowerCase());
-              return simB - simA;
-            });
-          }
-          results.push(...list.slice(0, 8));
+        addCandidates(list, 20);
+      }
+
+      // Try first word if multi-word (e.g. "Amos" from "Amos de la Team Rocket", "Sorboul" from "Sorboul de N")
+      const words = cleanName.split(/\s+/).filter(w => w.length >= 3);
+      if (words.length > 1) {
+        const firstWord = words[0];
+        res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(firstWord)}`);
+        if (res.ok) {
+          const list = await res.json();
+          addCandidates(list, 10);
         }
       }
     } catch (e) {
-      console.warn("Strategy 2 error:", e);
+      console.warn("Name search error:", e);
     }
   }
 
-  // Strategy 3: Search by Name only
-  if (results.length === 0 && cleanName) {
-    try {
-      const res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(cleanName)}`);
-      if (res.ok) {
-        const list = await res.json();
-        if (list && list.length > 0) {
-          results.push(...list.slice(0, 10));
-        }
-      }
-    } catch (e) {
-      console.warn("Strategy 3 error:", e);
-    }
-  }
+  // Convert candidates to sorted list
+  const sortedCandidates = Array.from(candidateMap.values())
+    .sort((a, b) => b.score - a.score)
+    .map(c => c.card);
 
-  // Deduplicate results
-  const uniqueResults = [];
-  const seenIds = new Set();
-  for (const item of results) {
-    if (!seenIds.has(item.id)) {
-      seenIds.add(item.id);
-      uniqueResults.push(item);
-    }
-  }
-
-  if (uniqueResults.length === 0) {
+  if (sortedCandidates.length === 0) {
     return null;
   }
 
-  // Fetch full details for the top match
-  const bestMatch = await getCardDetails(uniqueResults[0].id);
-  
+  // Fetch full details for the highest scoring card
+  const bestMatch = await getCardDetails(sortedCandidates[0].id);
+
   return {
     bestMatch,
-    alternatives: uniqueResults.slice(1, 6)
+    alternatives: sortedCandidates.slice(1, 8),
+    meta: {
+      recognizedName: cleanName,
+      recognizedId: cleanId,
+      recognizedTotal: totalInSet,
+      recognizedSetCode: setCode
+    }
   };
+}
+
+/**
+ * Calculates Multi-Factor Match Score (0 to 100)
+ */
+function calculateMatchScore(card, target) {
+  let score = 0;
+  const cardName = (card.name || '').toLowerCase();
+  const targetName = (target.cleanName || '').toLowerCase();
+  const cardId = String(card.localId || '').trim();
+
+  // 1. Number Match (up to 40 pts)
+  if (target.cleanId) {
+    if (cardId === target.cleanId || cardId === target.cleanIdPadded || cardId === target.cleanIdUnpadded) {
+      score += 40;
+    }
+  }
+
+  // 2. Name Match (up to 45 pts)
+  if (targetName) {
+    if (cardName === targetName) {
+      score += 45;
+    } else if (cardName.includes(targetName) || targetName.includes(cardName)) {
+      score += 35;
+    } else {
+      // Check first token / word
+      const targetFirst = targetName.split(' ')[0];
+      const cardFirst = cardName.split(' ')[0];
+      if (targetFirst && cardFirst && (targetFirst === cardFirst || cardName.includes(targetFirst))) {
+        score += 25;
+      } else {
+        const sim = stringSimilarity(cardName, targetName);
+        score += Math.round(sim * 25);
+      }
+    }
+  }
+
+  // 3. Set Code / Set ID Match (up to 15 pts)
+  if (target.mappedSetId && card.id && card.id.toLowerCase().includes(target.mappedSetId)) {
+    score += 15;
+  }
+
+  return score;
 }
 
 /**
  * Manual Instant Search for Auto-complete
  */
 export async function searchCardsLive(query) {
-  if (!query || query.trim().length < 2) return [];
+  if (!query || query.trim().length < 1) return [];
+  const cleanQ = query.trim();
   try {
-    const res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(query.trim())}`);
+    // If user types a number, search by localId
+    if (/^\d+$/.test(cleanQ)) {
+      const res = await fetch(`${API_BASE}/cards?localId=${encodeURIComponent(cleanQ)}`);
+      if (res.ok) {
+        const list = await res.json();
+        return list.slice(0, 15);
+      }
+    }
+
+    const res = await fetch(`${API_BASE}/cards?name=${encodeURIComponent(cleanQ)}`);
     if (!res.ok) return [];
     const list = await res.json();
     return list.slice(0, 15);
@@ -149,20 +208,15 @@ function formatCardData(raw) {
   const cardmarket = raw.pricing?.cardmarket || {};
   const tcgplayer = raw.pricing?.tcgplayer || {};
 
-  // Extract Euro prices from Cardmarket
   const avgPrice = cardmarket.avg || cardmarket.avg30 || cardmarket.trend || null;
   const lowPrice = cardmarket.low || null;
   const trendPrice = cardmarket.trend || avgPrice || null;
   const holoPrice = cardmarket['avg-holo'] || cardmarket['trend-holo'] || null;
 
-  // Extract USD prices from TCGPlayer
   const tcgNormal = tcgplayer.normal || tcgplayer.holofoil || tcgplayer['reverse-holofoil'] || {};
   const marketPriceUsd = tcgNormal.marketPrice || tcgNormal.midPrice || null;
 
-  // Default display price (Euro preferred)
   const displayPriceEur = trendPrice || avgPrice || (marketPriceUsd ? marketPriceUsd * 0.92 : 0.20);
-
-  // Evaluate Grading Feasibility
   const grading = evaluateGradingFeasibility(raw, displayPriceEur);
 
   return {
@@ -208,15 +262,14 @@ function formatCardData(raw) {
 }
 
 /**
- * Intelligent Grading Valuation Calculator
+ * Financial Grading Profitability Matrix
  */
 export function evaluateGradingFeasibility(card, rawPriceEur) {
   const price = Number(rawPriceEur) || 0;
   const rarity = (card.rarity || '').toLowerCase();
   const name = (card.name || '').toLowerCase();
-  const gradingCost = 15; // standard ~15€ certification fee + shipping
+  const gradingCost = 15;
 
-  // High-tier keywords
   const isUltraRare = rarity.includes('ultra') || 
                       rarity.includes('secret') || 
                       rarity.includes('illustration') || 
@@ -274,7 +327,6 @@ export function evaluateGradingFeasibility(card, rawPriceEur) {
   };
 }
 
-// Levenshtein similarity metric
 function stringSimilarity(s1, s2) {
   let longer = s1;
   let shorter = s2;

@@ -39,15 +39,15 @@ const COMMON_NAMES = [
   'Tissenboule de la Team Rocket', 'Amos de la Team Rocket', 'Amis de la Team Rocket', 'Sbire de la Team Rocket',
   'Nostenfer-ex de la Team Rocket', 'Nidoking-ex de la Team Rocket', 'Énergie de la Team Rocket',
   'Sorboul de N', 'Sorbébé de N', 'Sorbouboul de N', 'Grotichon', 'Gruikui', 'Roitiflam',
-  'Tissenboule', 'Filentrappe', 'Sucroquin', 'Cupcanaille',
-  'Pikachu', 'Pikachu-ex', 'Dracaufeu', 'Dracaufeu-ex', 'Tortank', 'Tortank-ex', 'Florizarre', 'Florizarre-ex',
+  'Tissenboule', 'Filentrappe', 'Sucroquin', 'Cupcanaille', 'Germéclat', 'Glimmet', 'Floréclat', 'Glimmora',
+  'Pikachu', 'Pikachu-ex', 'Dracaufeu', 'Dracaufeu-ex', 'Charizard', 'Charizard-ex', 'Tortank', 'Tortank-ex', 'Blastoise', 'Florizarre', 'Florizarre-ex', 'Venusaur',
   'Mewtwo', 'Mew', 'Mew-ex', 'Rayquaza', 'Rayquaza VMAX', 'Gengar', 'Ectoplasma', 'Ectoplasma-ex',
-  'Lugia', 'Lugia V', 'Giratina', 'Giratina VSTAR', 'Noctali', 'Noctali VMAX', 'Mentali', 'Aquali', 'Pyroli', 'Voltali', 'Givrali', 'Phyllali', 'Nymphali',
-  'Beldeneige', 'Frissonille', 'Groudon', 'Kyogre', 'Dialga', 'Palkia', 'Arceus', 'Zekrom', 'Reshiram',
-  'Lucario', 'Carchacrok', 'Gardevoir', 'Gardevoir-ex', 'Ronflex', 'Evoli', 'Salamèche', 'Reptincel', 'Bulbizarre', 'Herbizarre',
-  'Carapuce', 'Carabaffe', 'Fantominus', 'Spectrum', 'Alakazam', 'Léviator', 'Magicarpe', 'Minidraco', 'Dracolosse',
-  'Porygon', 'Porygon2', 'Porygon-Z', 'Malamandre', 'Mortermure', 'Rugit-Lune', 'Garde-de-Fer', 'Pelage-Sablé',
-  'Paume-de-Fer', 'Hurle-Queue', 'Fongus-Furie', 'Flotte-Mèche', 'Hotte-de-Fer', 'Épine-de-Fer', 'Chef-de-Fer', 'Marill', 'Azumarill'
+  'Lugia', 'Lugia V', 'Giratina', 'Giratina VSTAR', 'Noctali', 'Umbreon', 'Noctali VMAX', 'Mentali', 'Espeon', 'Aquali', 'Vaporeon', 'Pyroli', 'Flareon', 'Voltali', 'Jolteon', 'Givrali', 'Glaceon', 'Phyllali', 'Leafeon', 'Nymphali', 'Sylveon',
+  'Beldeneige', 'Frosmoth', 'Frissonille', 'Snom', 'Groudon', 'Kyogre', 'Dialga', 'Palkia', 'Arceus', 'Zekrom', 'Reshiram',
+  'Lucario', 'Carchacrok', 'Garchomp', 'Gardevoir', 'Gardevoir-ex', 'Ronflex', 'Snorlax', 'Evoli', 'Eevee', 'Salamèche', 'Charmander', 'Reptincel', 'Charmeleon', 'Bulbizarre', 'Bulbasaur', 'Herbizarre', 'Ivysaur',
+  'Carapuce', 'Squirtle', 'Carabaffe', 'Wartortle', 'Fantominus', 'Gastly', 'Spectrum', 'Haunter', 'Alakazam', 'Léviator', 'Gyarados', 'Magicarpe', 'Magikarp', 'Minidraco', 'Dratini', 'Draco', 'Dragonair', 'Dracolosse', 'Dragonite',
+  'Porygon', 'Porygon2', 'Porygon-Z', 'Malamandre', 'Salazzle', 'Mortermure', 'Pecharunt', 'Rugit-Lune', 'Roaring Moon', 'Garde-de-Fer', 'Iron Valiant', 'Pelage-Sablé', 'Sandy Shocks',
+  'Paume-de-Fer', 'Iron Hands', 'Hurle-Queue', 'Scream Tail', 'Fongus-Furie', 'Brute Bonnet', 'Flotte-Mèche', 'Flutter Mane', 'Hotte-de-Fer', 'Iron Bundle', 'Épine-de-Fer', 'Iron Thorns', 'Chef-de-Fer', 'Iron Crown', 'Marill', 'Azumarill'
 ];
 
 class OcrService {

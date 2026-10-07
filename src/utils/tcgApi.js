@@ -9,30 +9,38 @@ const SET_ALIASES = {
   'ASC': 'me02.5',  // Héros Transcendants
   'ME02.5': 'me02.5',
   'MEE': 'mee',     // Mega Evolution Energies
-  'SSP': 'sv08',    // Étincelles Radieuses
-  'SCR': 'sv07',    // Couronne Stellaire
-  'TWM': 'sv06',    // Mascarade Crépusculaire
-  'TEF': 'sv05',    // Forces Temporelles
-  'PAF': 'sv04.5',  // Destinées de Paldea
-  'PAR': 'sv04',    // Faille Paradoxe
+  'SSP': 'sv08',    // Étincelles Radieuses / Surging Sparks
+  'SCR': 'sv07',    // Couronne Stellaire / Stellar Crown
+  'TWM': 'sv06',    // Mascarade Crépusculaire / Twilight Masquerade
+  'TEF': 'sv05',    // Forces Temporelles / Temporal Forces
+  'PAF': 'sv04.5',  // Destinées de Paldea / Paldean Fates
+  'PAR': 'sv04',    // Faille Paradoxe / Paradox Rift
   'MEW': 'sv03.5',  // 151
-  'OBF': 'sv03',    // Flammes Obsidiennes
-  'SVI': 'sv01',    // Écarlate et Violet
-  'PRE': 'sv08.5',  // Évolutions Prismatiques
-  'CRZ': 'swsh12.5',
-  'SIT': 'swsh12',
-  'LOR': 'swsh11',
-  'ASR': 'swsh10',
-  'BRS': 'swsh9',
-  'FST': 'swsh8',
-  'EVS': 'swsh7',
-  'CRE': 'swsh6',
-  'BST': 'swsh5',
-  'VIV': 'swsh4',
-  'DAA': 'swsh3',
-  'SSH': 'swsh1',
+  'OBF': 'sv03',    // Flammes Obsidiennes / Obsidian Flames
+  'SVI': 'sv01',    // Écarlate et Violet / Scarlet & Violet
+  'PRE': 'sv08.5',  // Évolutions Prismatiques / Prismatic Evolutions
+  'CRZ': 'swsh12.5',// Crown Zenith / Zénith Suprême
+  'SIT': 'swsh12',  // Silver Tempest / Tempête Argentée
+  'LOR': 'swsh11',  // Lost Origin / Origine Perdue
+  'ASR': 'swsh10',  // Astral Radiance / Astres Radieux
+  'BRS': 'swsh9',   // Brilliant Stars / Stars Étincelantes
+  'FST': 'swsh8',   // Fusion Strike / Poing de Fusion
+  'CEL': 'cel25',   // Célébrations
+  'EVS': 'swsh7',   // Evolving Skies / Évolution Céleste
+  'CRE': 'swsh6',   // Chilling Reign / Règne de Glace
+  'BST': 'swsh5',   // Battle Styles / Styles de Combat
+  'SHF': 'swsh4.5', // Shining Fates / Destinées Radieuses
+  'VIV': 'swsh4',   // Vivid Voltage / Voltage Éclatant
+  'DAA': 'swsh3',   // Darkness Ablaze / Ténèbres Embrasées
+  'RCL': 'swsh2',   // Clash des Rebelles
+  'SSH': 'swsh1',   // Épée et Bouclier Base
   'BKT': 'xy8',
-  'HIF': 'sm115'
+  'HIF': 'sm115',   // Destinées Occultes
+  'UNM': 'sm11',
+  'UNB': 'sm10',
+  'TEU': 'sm9',
+  'LOT': 'sm8',
+  'SUM': 'sm1'
 };
 
 /**
@@ -274,24 +282,113 @@ function scoreAndAddCandidate(card, map, ctx, baseBonus = 0) {
 }
 
 /**
- * Manual Instant Search for Auto-complete
+ * Manual Instant Search for Auto-complete (Bilingual FR/EN + Set Codes + Fractions + Numbers)
  */
 export async function searchCardsLive(query) {
   if (!query || query.trim().length < 1) return [];
   const cleanQ = query.trim();
+  const resultsMap = new Map();
+
+  const addCards = (list) => {
+    if (!Array.isArray(list)) return;
+    for (const item of list) {
+      if (item && item.id && !resultsMap.has(item.id)) {
+        resultsMap.set(item.id, item);
+      }
+    }
+  };
+
   try {
-    if (/^\d+$/.test(cleanQ)) {
-      const res = await fetch(`${API_FR}/cards?localId=${encodeURIComponent(cleanQ)}`);
-      if (res.ok) {
-        const list = await res.json();
-        return list.slice(0, 15);
+    // 1. Direct Card ID (e.g. sv06-108, me02.5-050)
+    if (/^[a-zA-Z0-9.]+-(\d+|[a-zA-Z0-9]+)$/.test(cleanQ)) {
+      const [resFr, resEn] = await Promise.all([
+        fetch(`${API_FR}/cards/${cleanQ}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch(`${API_EN}/cards/${cleanQ}`).then(r => r.ok ? r.json() : null).catch(() => null)
+      ]);
+      if (resFr) addCards([resFr]);
+      else if (resEn) addCards([resEn]);
+    }
+
+    // 2. Set Fraction (e.g. 108/167, 050/217)
+    const fracMatch = cleanQ.match(/^(\d{1,3})\s*\/\s*(\d{2,3})$/);
+    if (fracMatch) {
+      const num = fracMatch[1];
+      const total = fracMatch[2];
+      const setId = SET_TOTAL_MAP[total];
+      if (setId) {
+        const cleanNum = num.replace(/^0+/, '');
+        const idsToTry = [`${setId}-${cleanNum}`, `${setId}-${num}`];
+        for (const directId of idsToTry) {
+          const [resFr, resEn] = await Promise.all([
+            fetch(`${API_FR}/cards/${directId}`).then(r => r.ok ? r.json() : null).catch(() => null),
+            fetch(`${API_EN}/cards/${directId}`).then(r => r.ok ? r.json() : null).catch(() => null)
+          ]);
+          if (resFr) { addCards([resFr]); break; }
+          if (resEn) { addCards([resEn]); break; }
+        }
       }
     }
 
-    const res = await fetch(`${API_FR}/cards?name=${encodeURIComponent(cleanQ)}`);
-    if (!res.ok) return [];
-    const list = await res.json();
-    return list.slice(0, 15);
+    // 3. Set Code + Number (e.g. TWM 108, sv06 108, ASC 050)
+    const setNumMatch = cleanQ.match(/^([A-Za-z0-9.]+)\s+([0-9]{1,3})$/);
+    if (setNumMatch) {
+      const rawSet = setNumMatch[1].toUpperCase();
+      const num = setNumMatch[2].replace(/^0+/, '');
+      const setId = SET_ALIASES[rawSet] || rawSet.toLowerCase();
+      const directId = `${setId}-${num}`;
+      const [resFr, resEn] = await Promise.all([
+        fetch(`${API_FR}/cards/${directId}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch(`${API_EN}/cards/${directId}`).then(r => r.ok ? r.json() : null).catch(() => null)
+      ]);
+      if (resFr) addCards([resFr]);
+      else if (resEn) addCards([resEn]);
+    }
+
+    // 4. Name + Number (e.g. Glimmet 108, Germéclat 108, Pikachu 006)
+    const nameNumMatch = cleanQ.match(/^([A-Za-zÀ-ÿ\s'-]+?)\s+(\d{1,3})$/);
+    if (nameNumMatch) {
+      const namePart = nameNumMatch[1].trim();
+      const numPart = nameNumMatch[2].replace(/^0+/, '');
+      const [resFr, resEn] = await Promise.all([
+        fetch(`${API_FR}/cards?name=${encodeURIComponent(namePart)}&localId=${encodeURIComponent(numPart)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`${API_EN}/cards?name=${encodeURIComponent(namePart)}&localId=${encodeURIComponent(numPart)}`).then(r => r.ok ? r.json() : []).catch(() => [])
+      ]);
+      addCards(resFr);
+      addCards(resEn);
+    }
+
+    // 5. Pure Number (e.g. 108)
+    if (/^\d+$/.test(cleanQ)) {
+      const [resFr, resEn] = await Promise.all([
+        fetch(`${API_FR}/cards?localId=${encodeURIComponent(cleanQ)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`${API_EN}/cards?localId=${encodeURIComponent(cleanQ)}`).then(r => r.ok ? r.json() : []).catch(() => [])
+      ]);
+      addCards(resFr);
+      addCards(resEn);
+    }
+
+    // 6. Multilingual Name Query (Search FR + EN in Parallel)
+    const [resFr, resEn] = await Promise.all([
+      fetch(`${API_FR}/cards?name=${encodeURIComponent(cleanQ)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+      fetch(`${API_EN}/cards?name=${encodeURIComponent(cleanQ)}`).then(r => r.ok ? r.json() : []).catch(() => [])
+    ]);
+    addCards(resFr);
+    addCards(resEn);
+
+    // If query has multiple words and nothing found, try first word
+    if (resultsMap.size === 0 && cleanQ.length >= 3) {
+      const words = cleanQ.split(/\s+/);
+      if (words.length > 1 && words[0].length >= 3) {
+        const [resWordFr, resWordEn] = await Promise.all([
+          fetch(`${API_FR}/cards?name=${encodeURIComponent(words[0])}`).then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch(`${API_EN}/cards?name=${encodeURIComponent(words[0])}`).then(r => r.ok ? r.json() : []).catch(() => [])
+        ]);
+        addCards(resWordFr);
+        addCards(resWordEn);
+      }
+    }
+
+    return Array.from(resultsMap.values()).slice(0, 30);
   } catch (err) {
     console.error("Live search error:", err);
     return [];

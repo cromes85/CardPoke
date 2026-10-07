@@ -79,6 +79,60 @@ class SoundManager {
     }
   }
 
+  // Card Drop notification beep (for 3D tower scanner)
+  playDropBeep() {
+    if (!this.enabled) return;
+    try {
+      this.init();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(987.77, now); // B5
+      osc.frequency.exponentialRampToValueAtTime(1318.51, now + 0.12); // E6
+
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.15);
+    } catch (e) {
+      console.warn("Audio error:", e);
+    }
+  }
+
+  // Coin / Value ding
+  playCoinDing() {
+    if (!this.enabled) return;
+    try {
+      this.init();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(1567.98, now); // G6
+      osc.frequency.setValueAtTime(2093.00, now + 0.08); // C7
+
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.35);
+    } catch (e) {
+      console.warn("Audio error:", e);
+    }
+  }
+
   // Rare / Ultra-rare fanfare
   playRareFanfare() {
     if (!this.enabled) return;

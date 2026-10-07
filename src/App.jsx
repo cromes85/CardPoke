@@ -3,6 +3,7 @@ import Header from './components/Header';
 import Scanner from './components/Scanner';
 import CardCropModal from './components/CardCropModal';
 import CardResultModal from './components/CardResultModal';
+import BatchRecapModal from './components/BatchRecapModal';
 import ManualSearch from './components/ManualSearch';
 import Collection from './components/Collection';
 import DeployGuideModal from './components/DeployGuideModal';
@@ -34,6 +35,9 @@ export default function App() {
   const [alternativeMatches, setAlternativeMatches] = useState([]);
   const [ocrMeta, setOcrMeta] = useState({});
   const [userCroppedDataUrl, setUserCroppedDataUrl] = useState(null);
+
+  // 3D Tower Batch Session Recap State
+  const [batchSessionCards, setBatchSessionCards] = useState(null);
 
   // Load collection on mount
   useEffect(() => {
@@ -124,6 +128,13 @@ export default function App() {
     }
   };
 
+  const handleSaveAllBatchToCollection = (items) => {
+    for (const item of items) {
+      saveCardToCollection(item.card, item.userPhoto, 'Near Mint (NM)', 'Scan Support 3D');
+    }
+    setCollection(getSavedCollection());
+  };
+
   const handleRemoveFromCollection = (itemId) => {
     const updated = removeCardFromCollection(itemId);
     setCollection(updated);
@@ -148,6 +159,7 @@ export default function App() {
         {activeTab === 'scanner' && (
           <Scanner
             onCardCaptured={handleCardCaptured}
+            onFinishBatchSession={(cards) => setBatchSessionCards(cards)}
             isProcessing={isProcessing}
             ocrProgress={ocrProgress}
             statusMessage={statusMessage}
@@ -203,6 +215,19 @@ export default function App() {
             setActiveTab('search');
           }}
           onClose={() => setSelectedCard(null)}
+        />
+      )}
+
+      {/* 3D Tower Batch Session Recap Modal */}
+      {batchSessionCards && (
+        <BatchRecapModal
+          sessionCards={batchSessionCards}
+          onSaveAllToCollection={handleSaveAllBatchToCollection}
+          onRestartScan={() => {
+            setBatchSessionCards(null);
+            setActiveTab('scanner');
+          }}
+          onClose={() => setBatchSessionCards(null)}
         />
       )}
 

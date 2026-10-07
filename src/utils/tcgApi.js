@@ -258,12 +258,17 @@ function formatCardData(raw) {
   const avgPrice = cardmarket.avg || cardmarket.avg30 || cardmarket.trend || null;
   const lowPrice = cardmarket.low || null;
   const trendPrice = cardmarket.trend || avgPrice || null;
-  const holoPrice = cardmarket['avg-holo'] || cardmarket['trend-holo'] || null;
+  
+  const holoPrice = cardmarket['trend-holo'] || cardmarket['avg-holo'] || cardmarket['low-holo'] || null;
+  const reversePrice = cardmarket['trend-reverse'] || cardmarket['avg-reverse'] || cardmarket['low-reverse'] || holoPrice || null;
 
-  const tcgNormal = tcgplayer.normal || tcgplayer.holofoil || tcgplayer['reverse-holofoil'] || {};
-  const marketPriceUsd = tcgNormal.marketPrice || tcgNormal.midPrice || null;
+  const tcgNormal = tcgplayer.normal || {};
+  const tcgHolo = tcgplayer.holofoil || {};
+  const tcgReverse = tcgplayer['reverse-holofoil'] || {};
 
-  const displayPriceEur = trendPrice || avgPrice || (marketPriceUsd ? marketPriceUsd * 0.92 : 0.20);
+  const marketPriceUsd = tcgNormal.marketPrice || tcgHolo.marketPrice || tcgReverse.marketPrice || null;
+
+  const displayPriceEur = trendPrice || avgPrice || (marketPriceUsd ? marketPriceUsd * 0.92 : 0.05);
   const grading = evaluateGradingFeasibility(raw, displayPriceEur);
 
   return {
@@ -293,9 +298,13 @@ function formatCardData(raw) {
         low: lowPrice ? Number(lowPrice).toFixed(2) : null,
         trend: trendPrice ? Number(trendPrice).toFixed(2) : null,
         holo: holoPrice ? Number(holoPrice).toFixed(2) : null,
+        reverse: reversePrice ? Number(reversePrice).toFixed(2) : null,
       },
       tcgplayer: {
         marketUsd: marketPriceUsd ? Number(marketPriceUsd).toFixed(2) : null,
+        normalUsd: tcgNormal.marketPrice ? Number(tcgNormal.marketPrice).toFixed(2) : null,
+        holoUsd: tcgHolo.marketPrice ? Number(tcgHolo.marketPrice).toFixed(2) : null,
+        reverseUsd: tcgReverse.marketPrice ? Number(tcgReverse.marketPrice).toFixed(2) : null,
       },
       estimatedEur: Number(displayPriceEur).toFixed(2)
     },

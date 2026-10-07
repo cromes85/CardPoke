@@ -11,7 +11,8 @@ import {
   RefreshCw,
   Search,
   ChevronRight,
-  Edit3
+  Edit3,
+  Layers
 } from 'lucide-react';
 import HoloCard3D from './HoloCard3D';
 import { soundManager } from '../utils/audio';
@@ -28,6 +29,7 @@ export default function CardResultModal({
   onClose 
 }) {
   const [condition, setCondition] = useState('Near Mint');
+  const [selectedFinish, setSelectedFinish] = useState('normal'); // 'normal' | 'holo' | 'reverse'
   const [userNote, setUserNote] = useState('');
   const [isSaved, setIsSaved] = useState(false);
 
@@ -49,6 +51,16 @@ export default function CardResultModal({
     links
   } = card;
 
+  const cm = pricing?.cardmarket || {};
+  const tcg = pricing?.tcgplayer || {};
+
+  // Compute Active Price based on selected finish
+  const activePriceEur = selectedFinish === 'holo' && cm.holo
+    ? cm.holo
+    : selectedFinish === 'reverse' && cm.reverse
+    ? cm.reverse
+    : pricing?.estimatedEur || '0.20';
+
   // Trigger celebration confetti & sound when saving
   const handleSave = () => {
     if (isSaved) return;
@@ -68,7 +80,16 @@ export default function CardResultModal({
       console.warn("Confetti error:", e);
     }
 
-    onSaveToCollection(card, userCroppedImage, condition, userNote);
+    const cardWithFinishPrice = {
+      ...card,
+      pricing: {
+        ...pricing,
+        estimatedEur: activePriceEur
+      },
+      selectedFinish
+    };
+
+    onSaveToCollection(cardWithFinishPrice, userCroppedImage, condition, userNote);
     setIsSaved(true);
   };
 
@@ -82,9 +103,6 @@ export default function CardResultModal({
     }
     setIsEditing(false);
   };
-
-  const cm = pricing?.cardmarket || {};
-  const tcg = pricing?.tcgplayer || {};
 
   return (
     <div className="fixed inset-0 z-50 backdrop-blur-md bg-slate-950/90 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
@@ -225,9 +243,51 @@ export default function CardResultModal({
                 {/* Primary Estimated Price */}
                 <div className="flex items-baseline gap-2 mb-3">
                   <span className="text-3xl sm:text-4xl font-black text-white">
-                    {pricing?.estimatedEur || '0.20'} €
+                    {activePriceEur} €
                   </span>
-                  <span className="text-xs text-slate-400 font-medium">prix moyen estimé</span>
+                  <span className="text-xs text-slate-400 font-medium">
+                    {selectedFinish === 'holo' ? 'version holographique' : selectedFinish === 'reverse' ? 'version reverse' : 'prix standard'}
+                  </span>
+                </div>
+
+                {/* Finish Selector Toggles */}
+                <div className="flex items-center gap-1.5 mb-3 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                  <button
+                    onClick={() => setSelectedFinish('normal')}
+                    className={`flex-1 py-1 px-2 rounded-lg font-bold text-center transition-all ${
+                      selectedFinish === 'normal'
+                        ? 'bg-slate-800 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Normale ({pricing?.estimatedEur || '0.05'} €)
+                  </button>
+
+                  {cm.holo && (
+                    <button
+                      onClick={() => setSelectedFinish('holo')}
+                      className={`flex-1 py-1 px-2 rounded-lg font-bold text-center transition-all ${
+                        selectedFinish === 'holo'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      ✨ Holo ({cm.holo} €)
+                    </button>
+                  )}
+
+                  {cm.reverse && (
+                    <button
+                      onClick={() => setSelectedFinish('reverse')}
+                      className={`flex-1 py-1 px-2 rounded-lg font-bold text-center transition-all ${
+                        selectedFinish === 'reverse'
+                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      🔮 Reverse ({cm.reverse} €)
+                    </button>
+                  )}
                 </div>
 
                 {/* Grid of Sub-Prices */}
@@ -241,8 +301,8 @@ export default function CardResultModal({
                     <span className="text-white font-bold">{cm.trend ? `${cm.trend} €` : 'N/A'}</span>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-[9px] text-slate-400 block">Holo / Reverse</span>
-                    <span className="text-white font-bold">{cm.holo ? `${cm.holo} €` : 'N/A'}</span>
+                    <span className="text-[9px] text-slate-400 block">Moyenne 30j</span>
+                    <span className="text-white font-bold">{cm.avg ? `${cm.avg} €` : 'N/A'}</span>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800">
                     <span className="text-[9px] text-slate-400 block">TCGPlayer (US)</span>
@@ -368,12 +428,12 @@ export default function CardResultModal({
                   {isSaved ? (
                     <>
                       <CheckCircle className="w-4 h-4" />
-                      <span>Carte Enregistrée !</span>
+                      <span>Carte Enregistrée ({activePriceEur} €) !</span>
                     </>
                   ) : (
                     <>
                       <BookmarkPlus className="w-4 h-4" />
-                      <span>Ajouter à ma Collection</span>
+                      <span>Ajouter à ma Collection ({activePriceEur} €)</span>
                     </>
                   )}
                 </button>

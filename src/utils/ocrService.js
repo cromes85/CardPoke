@@ -234,11 +234,19 @@ class OcrService {
       if (fuzzy) primaryName = fuzzy;
     }
 
+    // 6. HP / PV Extraction (e.g. 60 PV, 120 HP, 330 PC)
+    let hpCandidate = '';
+    const hpMatch = combined.match(/\b(\d{2,3})\s*(?:PV|HP|PC|P\/V|H\/P)\b/i) || combined.match(/(?:PV|HP|PC)\s*[:\s]*(\d{2,3})\b/i);
+    if (hpMatch) {
+      hpCandidate = `${hpMatch[1]} PV`;
+    }
+
     // 5. Card Category & Stage Extraction (Base / Niveau 1 / Niveau 2 / Dresseur / Énergie)
     const detectedCategory = detectCategoryFromText(combined);
 
     return {
       primaryName,
+      hp: hpCandidate,
       candidateWords,
       extractedNumbers: Array.from(numbers),
       localId: localIdCandidate,
@@ -246,6 +254,68 @@ class OcrService {
       setCode: setCodeCandidate,
       detectedCategory
     };
+  }
+
+  /**
+   * Fast real-time header recognition for live camera viewfinder in standby (Name + HP / PV)
+   */
+  async scanHeaderLive(headerCanvas) {
+    if (!headerCanvas) return null;
+    try {
+      const worker = await this.getWorker();
+      const res = await worker.recognize(headerCanvas);
+      const text = res?.data?.text || '';
+
+      // 1. Extract HP / PV (e.g., 60 PV, 120 HP, 330 PC)
+      let hp = '';
+      const hpMatch = text.match(/\b(\d{2,3})\s*(?:PV|HP|PC|P\/V|H\/P)\b/i) || text.match(/(?:PV|HP|PC)\s*[:\s]*(\d{2,3})\b/i);
+      if (hpMatch) {
+        hp = `${hpMatch[1]} PV`;
+      }
+
+      // 2. Extract Name
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      let name = '';
+      for (const line of lines) {
+        const match = line.match(/(?:BASE|BASIC|NIVEAU\s*\d?|STAGE\s*\d?|DRESSEUR|TRAINER)?\s*([A-Za-zÀ-ÿ\s'-]+?)\s*(?:PV|HP|PC|P\/V|H\/P|\d{2,3}\s*PV|\d{2,3}\s*HP|\d{2,3}\s*PC|$)/i);
+        if (match && match[1]) {
+          let cand = match[1].trim()
+            .replace(/^(BASE|BASIC|NIVEAU|STAGE|DRESSEUR|TRAINER|Évolution|Evolution)\s*/gi, '')
+            .replace(/\s*(PV|HP|PC|P\/V|H\/P|\d+)$/gi, '')
+            .trim();
+          cand = cleanWord(cand);
+          if (cand.length >= 3 && !STOP_WORDS.has(cand.toLowerCase()) && !/^(attaque|degats|faiblesse|resistance|retraite)$/i.test(cand)) {
+            name = cand;
+            break;
+          }
+        }
+      }
+
+      if (name) {
+        const fuzzy = findFuzzyMatch(name);
+        if (fuzzy) name = fuzzy;
+      }
+
+      // Fallback to words
+      if (!name) {
+        const words = (text.match(/[A-Za-zÀ-ÿ]{3,}/g) || [])
+          .map(w => cleanWord(w))
+          .filter(w => w.length >= 3 && !STOP_WORDS.has(w.toLowerCase()) && !/^(png|jpg|jpeg|webp|media|img|niveau|basic|base|pv|hp|pc)$/i.test(w));
+        if (words.length > 0) {
+          const fuzzy = findFuzzyMatch(words[0]);
+          name = fuzzy || words[0];
+        }
+      }
+
+      return {
+        rawText: text,
+        name: name || '',
+        hp: hp || '',
+        found: !!(name || hp)
+      };
+    } catch (e) {
+      return null;
+    }
   }
 }
 

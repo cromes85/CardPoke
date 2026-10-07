@@ -31,7 +31,7 @@ import {
 } from '../utils/cardDetection';
 import { soundManager } from '../utils/audio';
 import { ocrService } from '../utils/ocrService';
-import { searchCard } from '../utils/tcgApi';
+import { searchCard, getCardCategoryInfo } from '../utils/tcgApi';
 
 export default function Scanner({ 
   onCardCaptured, 
@@ -50,6 +50,15 @@ export default function Scanner({
   const [facingMode, setFacingMode] = useState('environment'); // 'environment' or 'user'
   const [torchOn, setTorchOn] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
+
+  // Real-Time Dynamic Header (Nom + PV/PC) Detection in Standby
+  const [liveHeaderScan, setLiveHeaderScan] = useState({
+    name: '',
+    hp: '',
+    isSearching: false,
+    lastScannedTime: 0
+  });
+  const isLiveScanningRef = useRef(false);
 
   // Ambient Lighting Metering State
   const [lightingInfo, setLightingInfo] = useState({ 
@@ -191,6 +200,57 @@ export default function Scanner({
 
     return () => clearInterval(interval);
   }, [hasCamera, cameraError]);
+
+  // Standby Real-Time Name & PV / HP Detection Loop (Cadre Bleu Dynamique)
+  useEffect(() => {
+    if (!hasCamera || cameraError || isProcessing) return;
+
+    const interval = setInterval(async () => {
+      if (!videoRef.current || videoRef.current.readyState < 2 || isProcessing || isLiveScanningRef.current) return;
+      if (scanMode === 'batch3d' && batchStatus === 'running') return; // 3D batch mode handles its own triggers
+
+      const video = videoRef.current;
+      const vw = video.videoWidth || 1280;
+      const vh = video.videoHeight || 720;
+
+      // Extract card top header zone based on centered card reticle proportions
+      const cropW = Math.floor(vw * 0.45);
+      const cropH = Math.floor(vh * 0.18);
+      const cropX = Math.floor((vw - cropW) / 2);
+      const cropY = Math.floor(vh * 0.28);
+
+      try {
+        isLiveScanningRef.current = true;
+        setLiveHeaderScan(prev => ({ ...prev, isSearching: true }));
+
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = cropW;
+        tempCanvas.height = cropH;
+        const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+        const enhanced = autoEnhanceLighting(tempCanvas, 0.9);
+        const res = await ocrService.scanHeaderLive(enhanced);
+
+        if (res && (res.name || res.hp)) {
+          setLiveHeaderScan({
+            name: res.name || '',
+            hp: res.hp || '',
+            isSearching: false,
+            lastScannedTime: Date.now()
+          });
+        } else {
+          setLiveHeaderScan(prev => ({ ...prev, isSearching: false }));
+        }
+      } catch (err) {
+        setLiveHeaderScan(prev => ({ ...prev, isSearching: false }));
+      } finally {
+        isLiveScanningRef.current = false;
+      }
+    }, 1600);
+
+    return () => clearInterval(interval);
+  }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus]);
 
   // Single Frame Capture (for Button & Auto Modes) with Auto-Lighting Equalizer
   const captureFrame = useCallback(() => {
@@ -584,11 +644,59 @@ export default function Scanner({
               <span className={`text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 border ${
                 scanMode === 'batch3d' ? 'text-emerald-400 border-emerald-500/30' : 'text-red-400 border-red-500/30'
               }`}>
-                {scanMode === 'batch3d' ? 'Emplacement Support 3D' : 'Aligner Nom & PV'}
+                {scanMode === 'batch3d' ? 'Emplacement Support 3D' : 'Viseur Carte'}
               </span>
               <span className="text-[10px] text-white/70 bg-slate-950/85 px-1.5 py-0.5 rounded font-mono">
                 63x88mm
               </span>
+            </div>
+
+            {/* DYNAMIC BLUE TARGETING FRAME (Cadre Bleu : Recherche Nom & PV) */}
+            <div className="relative w-full rounded-xl border-2 border-blue-400 bg-blue-500/15 backdrop-blur-[1px] p-2 flex flex-col justify-between shadow-[0_0_20px_rgba(59,130,246,0.45),inset_0_0_12px_rgba(59,130,246,0.2)] transition-all my-auto min-h-[72px] sm:min-h-[85px]">
+              {/* 4 Blue Inner Corner Reticles */}
+              <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-cyan-300 rounded-tl-sm" />
+              <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-cyan-300 rounded-tr-sm" />
+              <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-cyan-300 rounded-bl-sm" />
+              <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-cyan-300 rounded-br-sm" />
+
+              {/* Header Label inside Blue Frame */}
+              <div className="flex items-center justify-between w-full">
+                <span className="flex items-center gap-1.5 text-[8.5px] sm:text-[9.5px] font-black tracking-wide uppercase px-2 py-0.5 rounded bg-blue-600/90 text-white shadow-md border border-blue-400/50">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-300 animate-ping" />
+                  <span>Cadre Bleu : Nom & PV</span>
+                </span>
+                {liveHeaderScan.isSearching ? (
+                  <span className="text-[8.5px] text-cyan-300 font-mono font-bold animate-pulse">
+                    SCAN IA...
+                  </span>
+                ) : (
+                  <span className="text-[8.5px] text-blue-300/80 font-semibold hidden sm:inline">
+                    En direct
+                  </span>
+                )}
+              </div>
+
+              {/* Dynamic Live Result Pill */}
+              <div className="flex items-center justify-center w-full my-auto py-1">
+                {liveHeaderScan.name || liveHeaderScan.hp ? (
+                  <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-slate-950/95 border border-cyan-400 text-cyan-300 font-black text-[11px] sm:text-xs shadow-xl animate-in zoom-in-95">
+                    <span className="text-amber-400 text-xs">🎯</span>
+                    <span className="truncate max-w-[120px] sm:max-w-[160px]">{liveHeaderScan.name || 'Pokémon'}</span>
+                    {liveHeaderScan.hp && (
+                      <span className="px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-200 border border-cyan-500/50 text-[10px] font-mono">
+                        {liveHeaderScan.hp}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-[9px] text-blue-200/90 font-medium bg-slate-950/60 px-2 py-0.5 rounded-md">
+                    <span className="animate-pulse">🔍 Analyse active Nom & PV en attente...</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Blue Laser Ray Animation */}
+              <div className="absolute inset-x-1 h-[2px] bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_8px_#38bdf8] animate-pulse opacity-80" />
             </div>
 
             {/* Scanning Beam */}

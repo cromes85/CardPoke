@@ -2,21 +2,18 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   RotateCw, 
   RotateCcw, 
-  Check, 
   X, 
   Crop, 
   Sparkles, 
   Maximize2, 
   Scan, 
-  Crosshair,
-  Sliders
+  Crosshair
 } from 'lucide-react';
 import { 
   warpPerspective, 
   detectCardCorners, 
   getDefaultCenteredCorners, 
-  orderCorners,
-  CARD_ASPECT_RATIO 
+  orderCorners 
 } from '../utils/cardDetection';
 
 export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm, onCancel }) {
@@ -24,11 +21,10 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
   const imageCanvasRef = useRef(null);
   const loupeCanvasRef = useRef(null);
 
-  // Source canvas working copy (handles rotation)
   const [workingCanvas, setWorkingCanvas] = useState(sourceCanvas);
   const [rotation, setRotation] = useState(0);
 
-  // Corners in image pixel coordinates: [TL, TR, BR, BL]
+  // 4 corners: [TL, TR, BR, BL]
   const [corners, setCorners] = useState(() => {
     if (detectedCorners && detectedCorners.length === 4) {
       return orderCorners(detectedCorners);
@@ -36,11 +32,10 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
     return sourceCanvas ? getDefaultCenteredCorners(sourceCanvas.width, sourceCanvas.height) : [];
   });
 
-  // Dragging state
   const [activeCornerIdx, setActiveCornerIdx] = useState(null);
-  const [loupePos, setLoupePos] = useState(null); // { clientX, clientY, cornerX, cornerY }
+  const [loupePos, setLoupePos] = useState(null);
 
-  // Draw working canvas on preview
+  // Redraw preview canvas
   useEffect(() => {
     if (!workingCanvas || !imageCanvasRef.current) return;
     const canvas = imageCanvasRef.current;
@@ -66,18 +61,12 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
       rotated.height = workingCanvas.width;
       ctx.translate(0, rotated.height);
       ctx.rotate(-Math.PI / 2);
-    } else if (angleDeg === 180) {
-      rotated.width = workingCanvas.width;
-      rotated.height = workingCanvas.height;
-      ctx.translate(rotated.width, rotated.height);
-      ctx.rotate(Math.PI);
     }
 
     ctx.drawImage(workingCanvas, 0, 0);
     setWorkingCanvas(rotated);
     setRotation(prev => (prev + angleDeg + 360) % 360);
 
-    // Auto-detect or reset corners for new orientation
     const newCorners = detectCardCorners(rotated);
     setCorners(newCorners);
   };
@@ -109,9 +98,9 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
     ]);
   };
 
-  // Convert Screen/Touch Coordinates to Image Canvas Pixel Coordinates
+  // Convert Screen / Pointer Coordinates to Image Pixel Coordinates
   const getCanvasCoords = (clientX, clientY) => {
-    if (!imageCanvasRef.current || !containerRef.current) return null;
+    if (!imageCanvasRef.current) return null;
     const rect = imageCanvasRef.current.getBoundingClientRect();
     
     const scaleX = workingCanvas.width / rect.width;
@@ -120,52 +109,55 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
     let x = (clientX - rect.left) * scaleX;
     let y = (clientY - rect.top) * scaleY;
 
-    // Clamp within bounds
     x = Math.max(0, Math.min(workingCanvas.width, x));
     y = Math.max(0, Math.min(workingCanvas.height, y));
 
     return { x, y };
   };
 
-  // Touch / Mouse interaction handlers
+  // Universal HTML5 Pointer Event Drag Handlers (Touch + Mouse + Stylus)
   const handlePointerDown = (e, index) => {
     e.preventDefault();
     e.stopPropagation();
+    try {
+      e.target.setPointerCapture(e.pointerId);
+    } catch (err) {}
     setActiveCornerIdx(index);
-    updateLoupe(e.clientX || e.touches?.[0]?.clientX, e.clientY || e.touches?.[0]?.clientY, corners[index]);
+    updateLoupe(e.clientX, e.clientY, corners[index]);
   };
 
-  const handlePointerMove = useCallback((e) => {
-    if (activeCornerIdx === null || !workingCanvas) return;
-    
-    const clientX = e.clientX || e.touches?.[0]?.clientX;
-    const clientY = e.clientY || e.touches?.[0]?.clientY;
-    if (clientX === undefined || clientY === undefined) return;
+  const handlePointerMove = (e, index) => {
+    if (activeCornerIdx !== index || !workingCanvas) return;
+    e.preventDefault();
+    e.stopPropagation();
 
-    const coords = getCanvasCoords(clientX, clientY);
+    const coords = getCanvasCoords(e.clientX, e.clientY);
     if (!coords) return;
 
     setCorners(prev => {
       const next = [...prev];
-      next[activeCornerIdx] = coords;
+      next[index] = coords;
       return next;
     });
 
-    updateLoupe(clientX, clientY, coords);
-  }, [activeCornerIdx, workingCanvas]);
+    updateLoupe(e.clientX, e.clientY, coords);
+  };
 
-  const handlePointerUp = useCallback(() => {
+  const handlePointerUp = (e) => {
+    try {
+      e.target.releasePointerCapture(e.pointerId);
+    } catch (err) {}
     setActiveCornerIdx(null);
     setLoupePos(null);
-  }, []);
+  };
 
   // Update Magnifier Loupe canvas
   const updateLoupe = (clientX, clientY, imgCoords) => {
     if (!workingCanvas || !loupeCanvasRef.current || !imgCoords) return;
     const loupe = loupeCanvasRef.current;
     const ctx = loupe.getContext('2d');
-    const loupeSize = 100;
-    const zoom = 2.4;
+    const loupeSize = 110;
+    const zoom = 2.5;
 
     loupe.width = loupeSize;
     loupe.height = loupeSize;
@@ -178,9 +170,8 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
     ctx.clearRect(0, 0, loupeSize, loupeSize);
     ctx.drawImage(workingCanvas, sx, sy, cropW, cropH, 0, 0, loupeSize, loupeSize);
 
-    // Draw center crosshair
     ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(loupeSize / 2, 0);
     ctx.lineTo(loupeSize / 2, loupeSize);
@@ -189,46 +180,20 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
     ctx.stroke();
 
     setLoupePos({
-      clientX: clientX - 60,
-      clientY: clientY - 120
+      clientX: clientX - 55,
+      clientY: clientY - 130
     });
   };
 
-  // Add global touch/mouse move & up listeners
-  useEffect(() => {
-    const onMove = (e) => handlePointerMove(e);
-    const onUp = () => handlePointerUp();
-
-    if (activeCornerIdx !== null) {
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
-      window.addEventListener('touchmove', onMove, { passive: false });
-      window.addEventListener('touchend', onUp);
-      window.addEventListener('touchcancel', onUp);
-    }
-
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      window.removeEventListener('touchmove', onMove);
-      window.removeEventListener('touchend', onUp);
-      window.removeEventListener('touchcancel', onUp);
-    };
-  }, [activeCornerIdx, handlePointerMove, handlePointerUp]);
-
-  // Execute Perspective Warp and send to App.jsx
+  // Confirm perspective warp & run OCR
   const handleConfirm = () => {
     if (!workingCanvas || corners.length !== 4) return;
     const warped = warpPerspective(workingCanvas, corners, 630, 880);
     onConfirm(warped, workingCanvas);
   };
 
-  // Calculate percentage positions for SVG polygon
   const w = workingCanvas?.width || 1;
   const h = workingCanvas?.height || 1;
-  const polyPoints = corners.map(p => `${(p.x / w) * 100}%,${(p.y / h) * 100}%`).join(' ');
-
-  const cornerLabels = ['Haut Gauche', 'Haut Droit', 'Bas Droit', 'Bas Gauche'];
 
   return (
     <div className="fixed inset-0 z-50 backdrop-blur-md bg-slate-950/90 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
@@ -243,12 +208,12 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
             <div>
               <h3 className="text-white font-bold text-sm sm:text-base flex items-center gap-1.5">
                 <span>Recadrage & Bords de la Carte</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  Détection Auto
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
+                  v2.2
                 </span>
               </h3>
               <p className="text-[11px] text-slate-400">
-                Glissez les 4 pastilles colorées sur les 4 coins exacts de la carte
+                Glissez les 4 pastilles rouges sur les 4 coins exacts de la carte
               </p>
             </div>
           </div>
@@ -261,12 +226,12 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
           </button>
         </div>
 
-        {/* Quick Toolbar for Image Adjustment */}
+        {/* Quick Toolbar */}
         <div className="px-4 py-2 bg-slate-950/70 border-b border-slate-800/80 flex items-center justify-between gap-2 flex-wrap text-xs">
           <div className="flex items-center gap-1.5">
             <button
               onClick={handleAutoDetect}
-              title="Relancer la détection automatique des bords"
+              title="Détecter automatiquement les bords de la carte"
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-semibold transition-colors"
             >
               <Crosshair className="w-3.5 h-3.5" />
@@ -311,25 +276,25 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
         {/* Interactive Cropper Viewport */}
         <div 
           ref={containerRef}
-          className="relative w-full bg-slate-950 flex items-center justify-center overflow-hidden p-3 select-none touch-none max-h-[58vh]"
+          className="relative w-full bg-slate-950 flex items-center justify-center overflow-hidden p-3 select-none max-h-[58vh]"
+          style={{ touchAction: 'none' }}
         >
           <div className="relative inline-block max-h-[52vh]">
             
-            {/* Canvas Image Base */}
+            {/* Canvas Base */}
             <canvas
               ref={imageCanvasRef}
               className="max-h-[52vh] max-w-full object-contain block rounded-xl border border-slate-800 shadow-2xl pointer-events-none"
             />
 
-            {/* Interactive SVG Overlay with Shaded Cutout & Glowing Lines */}
+            {/* SVG Mask & Outline */}
             <svg 
               className="absolute inset-0 w-full h-full pointer-events-none overflow-visible"
               viewBox={`0 0 ${w} ${h}`}
               preserveAspectRatio="none"
             >
-              {/* Outer dimmed overlay */}
               <defs>
-                <mask id="cropMask">
+                <mask id="cropMaskV2">
                   <rect x="0" y="0" width={w} height={h} fill="white" />
                   <polygon points={corners.map(p => `${p.x},${p.y}`).join(' ')} fill="black" />
                 </mask>
@@ -341,10 +306,9 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
                 width={w} 
                 height={h} 
                 fill="rgba(0, 0, 0, 0.65)" 
-                mask="url(#cropMask)" 
+                mask="url(#cropMaskV2)" 
               />
 
-              {/* Glowing Outline polygon */}
               <polygon
                 points={corners.map(p => `${p.x},${p.y}`).join(' ')}
                 fill="rgba(239, 68, 68, 0.08)"
@@ -354,7 +318,7 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
               />
             </svg>
 
-            {/* 4 Interactive Draggable Corner Handles */}
+            {/* 4 Interactive Pointer Draggable Handles */}
             {corners.map((corner, idx) => {
               const leftPercent = (corner.x / w) * 100;
               const topPercent = (corner.y / h) * 100;
@@ -367,17 +331,19 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
                     left: `${leftPercent}%`,
                     top: `${topPercent}%`,
                     transform: 'translate(-50%, -50%)',
+                    touchAction: 'none'
                   }}
-                  onMouseDown={(e) => handlePointerDown(e, idx)}
-                  onTouchStart={(e) => handlePointerDown(e, idx)}
+                  onPointerDown={(e) => handlePointerDown(e, idx)}
+                  onPointerMove={(e) => handlePointerMove(e, idx)}
+                  onPointerUp={handlePointerUp}
+                  onPointerCancel={handlePointerUp}
                   className="absolute cursor-move z-30 flex items-center justify-center p-3 group"
                 >
-                  {/* Outer pulsating glow */}
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
                     isDragging
-                      ? 'scale-125 bg-red-500 shadow-[0_0_20px_#ef4444]'
-                      : 'bg-red-600/90 hover:scale-110 shadow-lg shadow-red-500/50 group-hover:bg-red-500'
-                  } border-2 border-white text-[10px] font-black text-white shadow-xl`}>
+                      ? 'scale-125 bg-red-500 shadow-[0_0_25px_#ef4444]'
+                      : 'bg-red-600 hover:scale-110 shadow-lg shadow-red-500/50 group-hover:bg-red-500'
+                  } border-2 border-white text-[11px] font-black text-white shadow-2xl`}>
                     {idx + 1}
                   </div>
                 </div>
@@ -386,14 +352,14 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
 
           </div>
 
-          {/* Floating Magnifying Loupe on Drag */}
+          {/* Floating Magnifying Loupe */}
           {loupePos && (
             <div
               style={{
                 left: `${loupePos.clientX}px`,
                 top: `${loupePos.clientY}px`,
               }}
-              className="fixed pointer-events-none z-50 rounded-full border-4 border-white shadow-2xl overflow-hidden bg-slate-950 w-24 h-24"
+              className="fixed pointer-events-none z-50 rounded-full border-4 border-white shadow-2xl overflow-hidden bg-slate-950 w-28 h-28"
             >
               <canvas
                 ref={loupeCanvasRef}

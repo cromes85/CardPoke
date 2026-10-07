@@ -23,6 +23,7 @@ import {
   orderCorners,
   snapAllCornersToEdges,
   snapPointToEdge,
+  expandCornersToOuterEdges,
   fitCardCornersToRatio,
   autoEnhanceLighting
 } from '../utils/cardDetection';
@@ -116,6 +117,13 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
     if (!workingCanvas || corners.length !== 4) return;
     const snapped = snapAllCornersToEdges(workingCanvas, corners, 35);
     setCorners(snapped);
+  };
+
+  // 1-Click Expand to Outermost Real Card Borders
+  const handleExpandToOuterEdges = () => {
+    if (!workingCanvas || corners.length !== 4) return;
+    const expanded = expandCornersToOuterEdges(workingCanvas, corners, 1.08);
+    setCorners(expanded);
   };
 
   // Lock and Fit to Official 63:88 Card Ratio
@@ -333,7 +341,7 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
               <h3 className="text-white font-bold text-xs sm:text-base flex items-center gap-1.5">
                 <span>Cadrage Automatique</span>
                 <span className="text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                  v3.0
+                  v3.1
                 </span>
               </h3>
               <p className="text-[10px] sm:text-[11px] text-slate-400">
@@ -355,11 +363,19 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
               onClick={handleAutoDetect}
-              title="Recalculer la détection automatique IA des 4 bords"
+              title="Recalculer la détection automatique IA des 4 bords extérieurs"
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/40 font-bold transition-all shadow-sm"
             >
               <Crosshair className="w-3.5 h-3.5" />
               <span>Auto-Ajuster IA</span>
+            </button>
+            <button
+              onClick={handleExpandToOuterEdges}
+              title="Agrandir et caler les 4 coins sur les bordures extérieures physiques réelles de la carte"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 font-bold border border-blue-500/40 transition-colors"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              <span>Bords Extérieurs</span>
             </button>
             <button
               onClick={handleSnapEdges}

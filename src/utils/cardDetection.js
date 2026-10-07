@@ -147,13 +147,16 @@ function detectWithOpenCV(canvas) {
 }
 
 /**
- * Pure JS High-Precision Multi-Ray Saliency & Gradient Profiler
+ * Pure JS High-Precision Outside-In Color Gradient Ray Sweeper & Geometric Card Detector
+ * Sweeps from image margins inward, locking onto the outermost physical card perimeter (yellow/silver/black border)
+ * without getting trapped by high-contrast internal artwork or text boxes.
  */
 export function detectCardCornersPureJS(canvas) {
+  if (!canvas || !canvas.width || !canvas.height) return null;
   const w = canvas.width;
   const h = canvas.height;
   
-  const maxDim = 400;
+  const maxDim = 460;
   const scale = Math.min(1, maxDim / Math.max(w, h));
   const sw = Math.floor(w * scale);
   const sh = Math.floor(h * scale);
@@ -173,19 +176,11 @@ export function detectCardCornersPureJS(canvas) {
   const imgData = ctx.getImageData(0, 0, sw, sh);
   const d = imgData.data;
   
-  // Grayscale & Luminance Saliency conversion
-  const gray = new Float32Array(sw * sh);
-  for (let i = 0; i < sw * sh; i++) {
-    const r = d[i * 4];
-    const g = d[i * 4 + 1];
-    const b = d[i * 4 + 2];
-    gray[i] = r * 0.299 + g * 0.587 + b * 0.114;
-  }
-  
-  // 3x3 Sobel Gradients
+  // 3-Channel Euclidean Color Gradients (R, G, B)
+  // Gx = sqrt((dRx)^2 + (dGx)^2 + (dBx)^2)
+  // Gy = sqrt((dRy)^2 + (dGy)^2 + (dBy)^2)
   const gradX = new Float32Array(sw * sh);
   const gradY = new Float32Array(sw * sh);
-  const gradMag = new Float32Array(sw * sh);
   
   for (let y = 1; y < sh - 1; y++) {
     const ysw = y * sw;
@@ -193,81 +188,130 @@ export function detectCardCornersPureJS(canvas) {
     const ynext = (y + 1) * sw;
 
     for (let x = 1; x < sw - 1; x++) {
-      const gx = 
-        -1 * gray[yprev + (x - 1)] + 1 * gray[yprev + (x + 1)] +
-        -2 * gray[ysw   + (x - 1)] + 2 * gray[ysw   + (x + 1)] +
-        -1 * gray[ynext + (x - 1)] + 1 * gray[ynext + (x + 1)];
-      
-      const gy = 
-        -1 * gray[yprev + (x - 1)] - 2 * gray[yprev + x] - 1 * gray[yprev + (x + 1)] +
-         1 * gray[ynext + (x - 1)] + 2 * gray[ynext + x] + 1 * gray[ynext + (x + 1)];
-      
-      gradX[ysw + x] = gx;
-      gradY[ysw + x] = gy;
-      gradMag[ysw + x] = Math.hypot(gx, gy);
+      const idxL = (ysw + (x - 1)) * 4;
+      const idxR = (ysw + (x + 1)) * 4;
+      const idxU = (yprev + x) * 4;
+      const idxD = (ynext + x) * 4;
+
+      const drx = d[idxR] - d[idxL];
+      const dgx = d[idxR + 1] - d[idxL + 1];
+      const dbx = d[idxR + 2] - d[idxL + 2];
+      gradX[ysw + x] = Math.hypot(drx, dgx, dbx);
+
+      const dry = d[idxD] - d[idxU];
+      const dgy = d[idxD + 1] - d[idxU + 1];
+      const dby = d[idxD + 2] - d[idxU + 2];
+      gradY[ysw + x] = Math.hypot(dry, dgy, dby);
     }
   }
   
   const cx = Math.floor(sw / 2);
   const cy = Math.floor(sh / 2);
+  const minThreshold = 24; // Minimum gradient magnitude for card edge
 
-  // Multi-Ray Edge Scanning with global max peak detection
+  // 1. LEFT EDGE: Outside-In Sweep from x = 3 inward to x = cx * 0.85
   const leftPoints = [];
-  for (let y = Math.floor(sh * 0.15); y < sh * 0.85; y += 2) {
-    let peakX = -1;
-    let maxG = 35;
-    for (let x = Math.floor(cx * 0.9); x >= Math.floor(sw * 0.04); x--) {
-      const g = Math.abs(gradX[y * sw + x]);
+  const yStart = Math.floor(sh * 0.12);
+  const yEnd = Math.floor(sh * 0.88);
+
+  for (let y = yStart; y < yEnd; y += 2) {
+    let bestX = -1;
+    let maxG = minThreshold;
+    const xMax = Math.floor(cx * 0.85);
+
+    for (let x = 3; x < xMax; x++) {
+      const g = gradX[y * sw + x];
       if (g > maxG) {
         maxG = g;
-        peakX = x;
+        bestX = x;
+        const gNext1 = gradX[y * sw + (x + 1)];
+        const gNext2 = gradX[y * sw + (x + 2)];
+        if (g > gNext1 && gNext1 > gNext2 && maxG >= minThreshold) {
+          break; // First outer edge found!
+        }
       }
     }
-    if (peakX > 0 && maxG >= 35) leftPoints.push({ x: peakX, y });
+    if (bestX > 0 && maxG >= minThreshold) {
+      leftPoints.push({ x: bestX, y });
+    }
   }
 
+  // 2. RIGHT EDGE: Outside-In Sweep from x = sw - 4 inward to x = cx * 1.15
   const rightPoints = [];
-  for (let y = Math.floor(sh * 0.15); y < sh * 0.85; y += 2) {
-    let peakX = -1;
-    let maxG = 35;
-    for (let x = Math.floor(cx * 1.1); x < Math.floor(sw * 0.96); x++) {
-      const g = Math.abs(gradX[y * sw + x]);
+  for (let y = yStart; y < yEnd; y += 2) {
+    let bestX = -1;
+    let maxG = minThreshold;
+    const xMin = Math.floor(cx * 1.15);
+
+    for (let x = sw - 4; x > xMin; x--) {
+      const g = gradX[y * sw + x];
       if (g > maxG) {
         maxG = g;
-        peakX = x;
+        bestX = x;
+        const gNext1 = gradX[y * sw + (x - 1)];
+        const gNext2 = gradX[y * sw + (x - 2)];
+        if (g > gNext1 && gNext1 > gNext2 && maxG >= minThreshold) {
+          break; // First outer edge found!
+        }
       }
     }
-    if (peakX > 0 && maxG >= 35) rightPoints.push({ x: peakX, y });
+    if (bestX > 0 && maxG >= minThreshold) {
+      rightPoints.push({ x: bestX, y });
+    }
   }
 
+  // 3. TOP EDGE: Outside-In Sweep from y = 3 inward to y = cy * 0.85
   const topPoints = [];
-  for (let x = Math.floor(sw * 0.15); x < sw * 0.85; x += 2) {
-    let peakY = -1;
-    let maxG = 35;
-    for (let y = Math.floor(cy * 0.9); y >= Math.floor(sh * 0.04); y--) {
-      const g = Math.abs(gradY[y * sw + x]);
+  const xStart = Math.floor(sw * 0.12);
+  const xEnd = Math.floor(sw * 0.88);
+
+  for (let x = xStart; x < xEnd; x += 2) {
+    let bestY = -1;
+    let maxG = minThreshold;
+    const yMax = Math.floor(cy * 0.85);
+
+    for (let y = 3; y < yMax; y++) {
+      const g = gradY[y * sw + x];
       if (g > maxG) {
         maxG = g;
-        peakY = y;
+        bestY = y;
+        const gNext1 = gradY[(y + 1) * sw + x];
+        const gNext2 = gradY[(y + 2) * sw + x];
+        if (g > gNext1 && gNext1 > gNext2 && maxG >= minThreshold) {
+          break; // First outer edge found!
+        }
       }
     }
-    if (peakY > 0 && maxG >= 35) topPoints.push({ x, y: peakY });
+    if (bestY > 0 && maxG >= minThreshold) {
+      topPoints.push({ x, y: bestY });
+    }
   }
 
+  // 4. BOTTOM EDGE: Outside-In Sweep from y = sh - 4 inward to y = cy * 1.15
   const bottomPoints = [];
-  for (let x = Math.floor(sw * 0.15); x < sw * 0.85; x += 2) {
-    let peakY = -1;
-    let maxG = 35;
-    for (let y = Math.floor(cy * 1.1); y < Math.floor(sh * 0.96); y++) {
-      const g = Math.abs(gradY[y * sw + x]);
+  for (let x = xStart; x < xEnd; x += 2) {
+    let bestY = -1;
+    let maxG = minThreshold;
+    const yMin = Math.floor(cy * 1.15);
+
+    for (let y = sh - 4; y > yMin; y--) {
+      const g = gradY[y * sw + x];
       if (g > maxG) {
         maxG = g;
-        peakY = y;
+        bestY = y;
+        const gNext1 = gradY[(y - 1) * sw + x];
+        const gNext2 = gradY[(y - 2) * sw + x];
+        if (g > gNext1 && gNext1 > gNext2 && maxG >= minThreshold) {
+          break; // First outer edge found!
+        }
       }
     }
-    if (peakY > 0 && maxG >= 35) bottomPoints.push({ x, y: peakY });
+    if (bestY > 0 && maxG >= minThreshold) {
+      bottomPoints.push({ x, y: bestY });
+    }
   }
 
+  // Fit robust lines with Median Absolute Deviation (MAD) filtering
   const leftLine = fitRobustVertical(leftPoints, sw);
   const rightLine = fitRobustVertical(rightPoints, sw);
   const topLine = fitRobustHorizontal(topPoints, sh);
@@ -292,7 +336,7 @@ export function detectCardCornersPureJS(canvas) {
       const cardH = Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y);
       const ratio = Math.min(cardW, cardH) / Math.max(cardW, cardH);
 
-      if (cardW > w * 0.20 && cardH > h * 0.20 && ratio >= 0.50 && ratio <= 0.90) {
+      if (cardW > w * 0.18 && cardH > h * 0.18 && ratio >= 0.50 && ratio <= 0.90) {
         return ordered;
       }
     }
@@ -303,8 +347,9 @@ export function detectCardCornersPureJS(canvas) {
 
 /**
  * Magnetic Edge Snapper: Snaps a point (x, y) to the nearest high-contrast card border within radius
+ * Uses 3-channel Euclidean Color Gradient for optimal yellow/silver border tracking
  */
-export function snapPointToEdge(canvas, pt, radius = 25) {
+export function snapPointToEdge(canvas, pt, radius = 30) {
   if (!canvas || !pt) return pt;
   const w = canvas.width;
   const h = canvas.height;
@@ -328,26 +373,28 @@ export function snapPointToEdge(canvas, pt, radius = 25) {
     let maxGrad = -1;
 
     for (let y = 1; y < rh - 1; y++) {
+      const yRow = y * rw;
       for (let x = 1; x < rw - 1; x++) {
-        const idx = (y * rw + x) * 4;
-        const idxL = (y * rw + (x - 1)) * 4;
-        const idxR = (y * rw + (x + 1)) * 4;
+        const idxL = (yRow + (x - 1)) * 4;
+        const idxR = (yRow + (x + 1)) * 4;
         const idxU = ((y - 1) * rw + x) * 4;
         const idxD = ((y + 1) * rw + x) * 4;
 
-        const lum = (d[idx] * 77 + d[idx + 1] * 150 + d[idx + 2] * 29) >> 8;
-        const lumL = (d[idxL] * 77 + d[idxL + 1] * 150 + d[idxL + 2] * 29) >> 8;
-        const lumR = (d[idxR] * 77 + d[idxR + 1] * 150 + d[idxR + 2] * 29) >> 8;
-        const lumU = (d[idxU] * 77 + d[idxU + 1] * 150 + d[idxU + 2] * 29) >> 8;
-        const lumD = (d[idxD] * 77 + d[idxD + 1] * 150 + d[idxD + 2] * 29) >> 8;
+        const drx = d[idxR] - d[idxL];
+        const dgx = d[idxR + 1] - d[idxL + 1];
+        const dbx = d[idxR + 2] - d[idxL + 2];
+        const gx = Math.hypot(drx, dgx, dbx);
 
-        const gx = lumR - lumL;
-        const gy = lumD - lumU;
+        const dry = d[idxD] - d[idxU];
+        const dgy = d[idxD + 1] - d[idxU + 1];
+        const dby = d[idxD + 2] - d[idxU + 2];
+        const gy = Math.hypot(dry, dgy, dby);
+
         const mag = gx * gx + gy * gy;
 
-        // Distance weighting to favor closer points
+        // Distance weighting to favor closer points while allowing outer snapping
         const dist = Math.hypot((minX + x) - pt.x, (minY + y) - pt.y);
-        const weightedMag = mag / (1 + dist * 0.05);
+        const weightedMag = mag / (1 + dist * 0.04);
 
         if (weightedMag > maxGrad) {
           maxGrad = weightedMag;
@@ -357,7 +404,7 @@ export function snapPointToEdge(canvas, pt, radius = 25) {
       }
     }
 
-    if (maxGrad > 800) {
+    if (maxGrad > 600) {
       return { x: bestX, y: bestY };
     }
   } catch (e) {}
@@ -368,9 +415,38 @@ export function snapPointToEdge(canvas, pt, radius = 25) {
 /**
  * Snap all 4 corners to local card edges in 1 click
  */
-export function snapAllCornersToEdges(canvas, corners, radius = 30) {
+export function snapAllCornersToEdges(canvas, corners, radius = 35) {
   if (!corners || corners.length !== 4) return corners;
   return corners.map(c => snapPointToEdge(canvas, c, radius));
+}
+
+/**
+ * Expand corners outward to lock onto the outermost card perimeter
+ * Ideal when a crop box is slightly collapsed inside the artwork or text
+ */
+export function expandCornersToOuterEdges(canvas, corners, expansionFactor = 1.08) {
+  if (!corners || corners.length !== 4 || !canvas) return corners;
+  const [tl, tr, br, bl] = orderCorners(corners);
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Quad Centroid
+  const cx = (tl.x + tr.x + br.x + bl.x) / 4;
+  const cy = (tl.y + tr.y + br.y + bl.y) / 4;
+
+  const expanded = [tl, tr, br, bl].map(corner => {
+    const vx = corner.x - cx;
+    const vy = corner.y - cy;
+    const newX = cx + vx * expansionFactor;
+    const newY = cy + vy * expansionFactor;
+    return {
+      x: Math.max(0, Math.min(w, Math.round(newX))),
+      y: Math.max(0, Math.min(h, Math.round(newY)))
+    };
+  });
+
+  // Snap expanded corners to local color gradients
+  return snapAllCornersToEdges(canvas, expanded, 35);
 }
 
 /**
@@ -416,7 +492,12 @@ function fitRobustVertical(points, sw) {
   const xs = points.map(p => p.x).sort((a, b) => a - b);
   const medianX = xs[Math.floor(xs.length / 2)];
   
-  const inliers = points.filter(p => Math.abs(p.x - medianX) < 22);
+  // Calculate MAD (Median Absolute Deviation)
+  const absDevs = points.map(p => Math.abs(p.x - medianX)).sort((a, b) => a - b);
+  const mad = absDevs[Math.floor(absDevs.length / 2)] || 1;
+  const tolerance = Math.max(12, mad * 2.8);
+
+  const inliers = points.filter(p => Math.abs(p.x - medianX) <= tolerance);
   if (inliers.length < 3) return { m: 0, c: medianX };
 
   let sumY = 0, sumX = 0, sumYY = 0, sumYX = 0;
@@ -441,7 +522,12 @@ function fitRobustHorizontal(points, sh) {
   const ys = points.map(p => p.y).sort((a, b) => a - b);
   const medianY = ys[Math.floor(ys.length / 2)];
   
-  const inliers = points.filter(p => Math.abs(p.y - medianY) < 22);
+  // Calculate MAD (Median Absolute Deviation)
+  const absDevs = points.map(p => Math.abs(p.y - medianY)).sort((a, b) => a - b);
+  const mad = absDevs[Math.floor(absDevs.length / 2)] || 1;
+  const tolerance = Math.max(12, mad * 2.8);
+
+  const inliers = points.filter(p => Math.abs(p.y - medianY) <= tolerance);
   if (inliers.length < 3) return { m: 0, c: medianY };
 
   let sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;

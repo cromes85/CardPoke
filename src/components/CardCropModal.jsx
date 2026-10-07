@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   RotateCw, 
   RotateCcw, 
@@ -7,7 +7,9 @@ import {
   Sparkles, 
   Maximize2, 
   Scan, 
-  Crosshair
+  Crosshair,
+  Eye,
+  Check
 } from 'lucide-react';
 import { 
   warpPerspective, 
@@ -20,16 +22,21 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
   const containerRef = useRef(null);
   const imageCanvasRef = useRef(null);
   const loupeCanvasRef = useRef(null);
+  const miniPreviewCanvasRef = useRef(null);
 
   const [workingCanvas, setWorkingCanvas] = useState(sourceCanvas);
   const [rotation, setRotation] = useState(0);
+  const [showMiniPreview, setShowMiniPreview] = useState(false);
 
   // 4 corners: [TL, TR, BR, BL]
   const [corners, setCorners] = useState(() => {
     if (detectedCorners && detectedCorners.length === 4) {
       return orderCorners(detectedCorners);
     }
-    return sourceCanvas ? getDefaultCenteredCorners(sourceCanvas.width, sourceCanvas.height) : [];
+    if (sourceCanvas) {
+      return detectCardCorners(sourceCanvas);
+    }
+    return [];
   });
 
   const [activeCornerIdx, setActiveCornerIdx] = useState(null);
@@ -44,6 +51,19 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
     const ctx = canvas.getContext('2d');
     ctx.drawImage(workingCanvas, 0, 0);
   }, [workingCanvas]);
+
+  // Update Mini Warped Preview when corners change
+  useEffect(() => {
+    if (!showMiniPreview || !workingCanvas || !miniPreviewCanvasRef.current || corners.length !== 4) return;
+    try {
+      const warped = warpPerspective(workingCanvas, corners, 240, 335);
+      const canvas = miniPreviewCanvasRef.current;
+      canvas.width = 240;
+      canvas.height = 335;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(warped, 0, 0);
+    } catch (e) {}
+  }, [corners, workingCanvas, showMiniPreview]);
 
   // Handle Rotation (90 deg left or right)
   const handleRotate = (angleDeg) => {
@@ -200,20 +220,20 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
       <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto max-h-[95vh]">
         
         {/* Modal Header */}
-        <div className="p-3.5 sm:p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/90 backdrop-blur-sm sticky top-0 z-20">
+        <div className="p-3 sm:p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/95 backdrop-blur-sm sticky top-0 z-20">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20">
               <Crop className="w-4 h-4" />
             </div>
             <div>
               <h3 className="text-white font-bold text-sm sm:text-base flex items-center gap-1.5">
-                <span>Recadrage & Bords de la Carte</span>
+                <span>Cadrage Automatique de la Carte</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                  v2.2
+                  IA v2.3
                 </span>
               </h3>
               <p className="text-[11px] text-slate-400">
-                Glissez les 4 pastilles rouges sur les 4 coins exacts de la carte
+                Bords détectés automatiquement. Ajustez les 4 pastilles si nécessaire.
               </p>
             </div>
           </div>
@@ -227,15 +247,15 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
         </div>
 
         {/* Quick Toolbar */}
-        <div className="px-4 py-2 bg-slate-950/70 border-b border-slate-800/80 flex items-center justify-between gap-2 flex-wrap text-xs">
-          <div className="flex items-center gap-1.5">
+        <div className="px-3 sm:px-4 py-2 bg-slate-950/80 border-b border-slate-800/80 flex items-center justify-between gap-2 flex-wrap text-xs">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <button
               onClick={handleAutoDetect}
-              title="Détecter automatiquement les bords de la carte"
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-semibold transition-colors"
+              title="Recalculer la détection automatique des 4 bords"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/40 font-bold transition-all shadow-sm"
             >
-              <Crosshair className="w-3.5 h-3.5" />
-              <span>Détection Auto</span>
+              <Crosshair className="w-3.5 h-3.5 animate-spin-slow" />
+              <span>Auto-Détection</span>
             </button>
             <button
               onClick={handleResetCardRatio}
@@ -243,7 +263,7 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700 transition-colors"
             >
               <Scan className="w-3.5 h-3.5" />
-              <span>Ratio Carte</span>
+              <span>Ratio 63:88</span>
             </button>
             <button
               onClick={handleFullImage}
@@ -252,6 +272,17 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
             >
               <Maximize2 className="w-3.5 h-3.5" />
               <span>Plein cadre</span>
+            </button>
+            <button
+              onClick={() => setShowMiniPreview(!showMiniPreview)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-semibold border transition-colors ${
+                showMiniPreview 
+                  ? 'bg-blue-600/20 text-blue-400 border-blue-500/40' 
+                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+              }`}
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>Aperçu</span>
             </button>
           </div>
 
@@ -364,6 +395,19 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
               <canvas
                 ref={loupeCanvasRef}
                 className="w-full h-full object-cover"
+              />
+            </div>
+          )}
+
+          {/* Live Mini Straightened Card Preview */}
+          {showMiniPreview && (
+            <div className="absolute bottom-3 right-3 z-40 bg-slate-900/95 border-2 border-slate-700 rounded-2xl shadow-2xl p-2 max-w-[120px] backdrop-blur-md">
+              <span className="text-[10px] font-bold text-slate-400 block mb-1 text-center">
+                Aperçu Redressé
+              </span>
+              <canvas
+                ref={miniPreviewCanvasRef}
+                className="w-full aspect-[63/88] rounded-lg border border-slate-800 object-cover"
               />
             </div>
           )}

@@ -1,5 +1,5 @@
 import { createWorker } from 'tesseract.js';
-import { extractAndPreprocessRoi } from './cardDetection';
+import { extractAndPreprocessRoi } from './cardDetection.js';
 
 const STOP_WORDS = new Set([
   'base', 'basic', 'niveau', 'stage', 'dresseur', 'trainer', 'supporter', 'stade', 'stadium', 'item', 'objet', 'talent', 'ability',

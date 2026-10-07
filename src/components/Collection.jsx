@@ -86,60 +86,60 @@ export default function Collection({
   return (
     <div className="max-w-6xl mx-auto p-4 sm:p-6 w-full space-y-6">
       
-      {/* Portfolio Header & KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Portfolio Header & KPIs (Fully Responsive Grid) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-4">
         
         {/* Total Portfolio Value */}
-        <div className="p-5 rounded-3xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30 shadow-xl flex items-center justify-between">
+        <div className="col-span-2 md:col-span-1 p-4 sm:p-5 rounded-2xl sm:rounded-3xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-500/30 shadow-xl flex items-center justify-between">
           <div>
-            <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider block">
+            <span className="text-[11px] sm:text-xs font-bold text-emerald-400 uppercase tracking-wider block">
               Valeur Totale Portfolio
             </span>
-            <span className="text-3xl font-black text-white mt-1 block">
+            <span className="text-2xl sm:text-3xl font-black text-white mt-0.5 block">
               {totalValueEur.toFixed(2)} €
             </span>
-            <span className="text-[11px] text-slate-400 mt-0.5 block">
-              Calculé en direct selon Cardmarket
+            <span className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 block">
+              Calculé selon Cardmarket
             </span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-            <TrendingUp className="w-6 h-6" />
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+            <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6" />
           </div>
         </div>
 
         {/* Total Cards Count */}
-        <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl flex items-center justify-between">
+        <div className="col-span-1 p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl bg-slate-900 border border-slate-800 shadow-xl flex items-center justify-between">
           <div>
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-              Cartes Enregistrées
+            <span className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider block">
+              Cartes
             </span>
-            <span className="text-3xl font-black text-white mt-1 block">
+            <span className="text-xl sm:text-3xl font-black text-white mt-0.5 block">
               {collection.length}
             </span>
-            <span className="text-[11px] text-slate-400 mt-0.5 block">
-              Dans votre classeur virtuel
+            <span className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 block truncate">
+              Enregistrées
             </span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400">
-            <Layers className="w-6 h-6" />
+          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 shrink-0">
+            <Layers className="w-4 h-4 sm:w-6 sm:h-6" />
           </div>
         </div>
 
         {/* Top Card */}
-        <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl flex items-center justify-between">
-          <div className="truncate mr-2">
-            <span className="text-xs font-bold text-amber-400 uppercase tracking-wider block">
-              Carte la plus Cotée
+        <div className="col-span-1 p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl bg-slate-900 border border-slate-800 shadow-xl flex items-center justify-between">
+          <div className="truncate mr-1">
+            <span className="text-[10px] sm:text-xs font-bold text-amber-400 uppercase tracking-wider block">
+              Top Cote
             </span>
-            <span className="text-lg font-black text-white mt-1 truncate block">
+            <span className="text-xs sm:text-lg font-black text-white mt-0.5 truncate block">
               {topCard ? topCard.name : 'Aucune'}
             </span>
             <span className="text-xs font-bold text-emerald-400 mt-0.5 block">
               {topCard ? `${topCard.priceEur.toFixed(2)} €` : '—'}
             </span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
-            <Sparkles className="w-6 h-6" />
+          <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+            <Sparkles className="w-4 h-4 sm:w-6 sm:h-6" />
           </div>
         </div>
 

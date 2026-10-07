@@ -94,14 +94,14 @@ export default function ManualSearch({ initialQuery = '', onSelectCard }) {
           ) : null}
         </div>
 
-        {/* Quick Suggestion Chips */}
-        <div className="flex items-center gap-1.5 flex-wrap mt-3 justify-center">
-          <span className="text-[11px] text-slate-500 font-semibold mr-1">Populaires :</span>
+        {/* Quick Suggestion Chips (Smooth Horizontal Scroll on Mobile) */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 mt-2.5 px-0.5 justify-start sm:justify-center">
+          <span className="text-[11px] text-slate-500 font-semibold mr-1 shrink-0">Populaires :</span>
           {QUICK_SEARCH_CHIPS.map(chip => (
             <button
               key={chip}
               onClick={() => setQuery(chip)}
-              className="px-2.5 py-1 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium border border-slate-700/60 transition-colors"
+              className="px-2.5 py-1 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium border border-slate-700/60 transition-colors shrink-0 whitespace-nowrap"
             >
               {chip}
             </button>
@@ -110,7 +110,7 @@ export default function ManualSearch({ initialQuery = '', onSelectCard }) {
       </div>
 
       {/* Results Grid */}
-      <div className="mt-8">
+      <div className="mt-6 sm:mt-8">
         {results.length > 0 ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
             {results.map((card) => (

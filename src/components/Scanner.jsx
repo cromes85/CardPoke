@@ -381,28 +381,28 @@ export default function Scanner({
     <div className="flex flex-col items-center justify-center p-2 sm:p-4 max-w-4xl mx-auto w-full">
       
       {/* Mode Switcher */}
-      <div className="w-full flex items-center justify-between mb-3 bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800 shadow-xl gap-1 flex-wrap">
-        <div className="flex items-center gap-1 flex-wrap">
+      <div className="w-full flex items-center justify-between mb-3 bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800 shadow-xl gap-1 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={() => setScanMode('batch3d')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all ${
+            className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all whitespace-nowrap ${
               scanMode === 'batch3d'
-                ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-600/30'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-md shadow-emerald-600/30'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>Support 3D (En Série)</span>
-            <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-400/40">
+            <span>Support 3D</span>
+            <span className="text-[8px] sm:text-[9px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-400/40">
               NEW
             </span>
           </button>
 
           <button
             onClick={() => setScanMode('button')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold transition-all whitespace-nowrap ${
               scanMode === 'button'
-                ? 'bg-red-600 text-white shadow-lg shadow-red-600/30'
+                ? 'bg-red-600 text-white shadow-md shadow-red-600/30'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -412,9 +412,9 @@ export default function Scanner({
 
           <button
             onClick={() => setScanMode('auto')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold transition-all whitespace-nowrap ${
               scanMode === 'auto'
-                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/30 font-black'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30 font-black'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -425,7 +425,7 @@ export default function Scanner({
 
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition-colors"
+          className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition-colors shrink-0 ml-auto whitespace-nowrap"
         >
           <Upload className="w-3.5 h-3.5 text-blue-400" />
           <span>Importer</span>
@@ -440,7 +440,7 @@ export default function Scanner({
       </div>
 
       {/* Main Viewfinder Box */}
-      <div className="relative w-full aspect-[4/3] sm:aspect-[16/10] max-h-[62vh] rounded-3xl overflow-hidden bg-slate-950 border-2 border-slate-800 shadow-2xl flex items-center justify-center group">
+      <div className="relative w-full aspect-[3/4] sm:aspect-[4/3] md:aspect-[16/10] max-h-[58vh] rounded-3xl overflow-hidden bg-slate-950 border-2 border-slate-800 shadow-2xl flex items-center justify-center group">
         
         {/* Camera Stream */}
         {hasCamera && !cameraError ? (
@@ -586,36 +586,38 @@ export default function Scanner({
       </div>
 
       {/* Control Bar */}
-      <div className="w-full mt-4">
+      <div className="w-full mt-3 sm:mt-4">
         {scanMode === 'batch3d' ? (
           /* Support 3D Tower Controls */
-          <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-900/90 p-3 rounded-2xl border border-slate-800 shadow-xl">
+          <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-2.5 sm:gap-3 bg-slate-900/90 p-2.5 sm:p-3 rounded-2xl border border-slate-800 shadow-xl">
             
             {/* Live Metrics Pill */}
-            <div className="flex items-center gap-3">
-              <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-2">
-                <span className="text-xs text-slate-400">Cartes :</span>
-                <span className="text-sm font-black text-white">{batchCards.length}</span>
-              </div>
+            <div className="flex items-center justify-between w-full sm:w-auto gap-2">
+              <div className="flex items-center gap-2">
+                <div className="px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-1.5">
+                  <span className="text-[11px] text-slate-400">Cartes :</span>
+                  <span className="text-xs sm:text-sm font-black text-white">{batchCards.length}</span>
+                </div>
 
-              <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-2">
-                <span className="text-xs text-slate-400">Total :</span>
-                <span className="text-sm font-black text-emerald-400">{totalBatchValue.toFixed(2)} €</span>
+                <div className="px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-1.5">
+                  <span className="text-[11px] text-slate-400">Total :</span>
+                  <span className="text-xs sm:text-sm font-black text-emerald-400">{totalBatchValue.toFixed(2)} €</span>
+                </div>
               </div>
 
               {queueCount > 0 && (
-                <span className="text-[11px] text-amber-400 font-semibold animate-pulse">
-                  ⏳ {queueCount} en cours d'analyse...
+                <span className="text-[10px] sm:text-[11px] text-amber-400 font-semibold animate-pulse">
+                  ⏳ {queueCount} en cours...
                 </span>
               )}
             </div>
 
             {/* Action Buttons: PLAY / PAUSE / STOP */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               {batchStatus === 'idle' ? (
                 <button
                   onClick={handleStartBatch}
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:opacity-95 text-white font-black text-sm shadow-xl shadow-emerald-600/30 active:scale-95 transition-all"
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:opacity-95 text-white font-black text-xs sm:text-sm shadow-xl shadow-emerald-600/30 active:scale-95 transition-all"
                 >
                   <Play className="w-4 h-4 fill-white" />
                   <span>Démarrer le Scan en Série (Play)</span>
@@ -624,7 +626,7 @@ export default function Scanner({
                 <>
                   <button
                     onClick={handleTogglePauseBatch}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition-colors"
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition-colors"
                   >
                     {batchStatus === 'running' ? (
                       <>
@@ -641,10 +643,10 @@ export default function Scanner({
 
                   <button
                     onClick={handleStopBatch}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:opacity-95 text-white font-black text-xs sm:text-sm shadow-xl shadow-red-600/30 active:scale-95 transition-all"
+                    className="flex-2 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:opacity-95 text-white font-black text-xs sm:text-sm shadow-xl shadow-red-600/30 active:scale-95 transition-all"
                   >
-                    <Square className="w-4 h-4 fill-white" />
-                    <span>Terminer & Voir le Récap (Stop)</span>
+                    <Square className="w-3.5 h-3.5 fill-white" />
+                    <span>Terminer & Récap (Stop)</span>
                   </button>
                 </>
               )}
@@ -653,18 +655,19 @@ export default function Scanner({
           </div>
         ) : scanMode === 'button' ? (
           /* Button Capture Mode */
-          <div className="w-full flex items-center justify-center">
+          <div className="w-full flex flex-col items-center justify-center gap-2">
             <button
               onClick={captureFrame}
               disabled={isProcessing || !hasCamera}
-              className="group relative flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-tr from-red-600 to-rose-500 p-1.5 shadow-2xl shadow-red-600/50 hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+              className="group relative flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-tr from-red-600 to-rose-500 p-1.5 shadow-2xl shadow-red-600/50 hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
             >
               <div className="w-full h-full rounded-full bg-slate-950 flex items-center justify-center border-2 border-white/80 group-hover:bg-slate-900 transition-colors">
-                <div className="w-8 h-8 rounded-full bg-red-600 border border-white/60 shadow-inner flex items-center justify-center">
-                  <div className="w-3 h-3 rounded-full bg-white group-hover:scale-110 transition-transform" />
+                <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-red-600 border border-white/60 shadow-inner flex items-center justify-center">
+                  <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-white group-hover:scale-110 transition-transform" />
                 </div>
               </div>
             </button>
+            <span className="text-[11px] text-slate-400 font-semibold">Appuyez pour capturer</span>
           </div>
         ) : (
           /* Auto Scan Countdown Mode */

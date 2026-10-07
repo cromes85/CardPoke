@@ -311,24 +311,24 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
   const h = workingCanvas?.height || 1;
 
   return (
-    <div className="fixed inset-0 z-50 backdrop-blur-md bg-slate-950/90 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto max-h-[95vh]">
+    <div className="fixed inset-0 z-50 backdrop-blur-md bg-slate-950/90 flex items-center justify-center p-1.5 sm:p-4 overflow-y-auto">
+      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto max-h-[96vh]">
         
         {/* Modal Header */}
-        <div className="p-3 sm:p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/95 backdrop-blur-sm sticky top-0 z-20">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20">
-              <Crop className="w-4 h-4" />
+        <div className="p-2.5 sm:p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/95 backdrop-blur-sm sticky top-0 z-20">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 sm:p-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20">
+              <Crop className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </div>
             <div>
-              <h3 className="text-white font-bold text-sm sm:text-base flex items-center gap-1.5">
-                <span>Cadrage Automatique de la Carte</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                  IA v2.7
+              <h3 className="text-white font-bold text-xs sm:text-base flex items-center gap-1.5">
+                <span>Cadrage Automatique</span>
+                <span className="text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
+                  v2.8
                 </span>
               </h3>
-              <p className="text-[11px] text-slate-400">
-                Glissez les coins ou déplacez le cadre pour ajuster la carte
+              <p className="text-[10px] sm:text-[11px] text-slate-400">
+                Ajustez les coins ou déplacez le cadre
               </p>
             </div>
           </div>
@@ -590,20 +590,20 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
         </div>
 
         {/* Footer Actions */}
-        <div className="p-3.5 sm:p-4 bg-slate-900 border-t border-slate-800 flex items-center justify-between gap-3">
+        <div className="p-2.5 sm:p-4 bg-slate-900 border-t border-slate-800 flex items-center justify-between gap-2">
           <button
             onClick={onCancel}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="px-3 sm:px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
             Annuler
           </button>
 
           <button
             onClick={handleConfirm}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:opacity-95 text-white font-bold text-xs sm:text-sm shadow-xl shadow-red-600/30 active:scale-95 transition-all"
+            className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 sm:px-6 py-2.5 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:opacity-95 text-white font-bold text-xs sm:text-sm shadow-xl shadow-red-600/30 active:scale-95 transition-all"
           >
             <Sparkles className="w-4 h-4" />
-            <span>Valider le Cadrage & Analyser</span>
+            <span>Valider & Analyser</span>
           </button>
         </div>
 

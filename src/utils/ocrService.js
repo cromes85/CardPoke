@@ -9,8 +9,22 @@ const STOP_WORDS = new Set([
   'nintendo', 'creatures', 'taille', 'poids', 'confiserie', 'cochon', 'mite', 'givre', 'gaz',
   'defenseur', 'défenseur', 'utilise', 'utilisez', 'active', 'banc', 'bench', 'poste', 'energie', 'énergie', 'energy',
   'incolore', 'colorless', 'plante', 'grass', 'feu', 'fire', 'eau', 'water', 'lightning', 'electrik', 'combat', 'fighting', 'obscurite', 'obscurité', 'darkness', 'metal', 'métal', 'steel',
-  'psy', 'psychic', 'dragon', 'illus', 'illustrator', 'illustrateur', 'copyright', 'edition', 'édition'
+  'psy', 'psychic', 'dragon', 'illus', 'illustrator', 'illustrateur', 'copyright', 'edition', 'édition', 'boule', 'fil'
 ]);
+
+// Known trainer and special prefixes / names
+const COMMON_NAMES = [
+  'Tissenboule de la Team Rocket', 'Amos de la Team Rocket', 'Amis de la Team Rocket', 'Sbire de la Team Rocket',
+  'Nostenfer-ex de la Team Rocket', 'Nidoking-ex de la Team Rocket', 'Énergie de la Team Rocket',
+  'Tissenboule', 'Filentrappe', 'Sucroquin', 'Cupcanaille', 'Grotichon', 'Gruikui', 'Roitiflam',
+  'Pikachu', 'Dracaufeu', 'Tortank', 'Florizarre', 'Mewtwo', 'Mew', 'Rayquaza', 'Gengar', 'Ectoplasma',
+  'Lugia', 'Giratina', 'Umbreon', 'Noctali', 'Mentali', 'Aquali', 'Pyroli', 'Voltali', 'Givrali', 'Phyllali', 'Nymphali',
+  'Beldeneige', 'Frissonille', 'Groudon', 'Kyogre', 'Dialga', 'Palkia', 'Arceus', 'Zekrom', 'Reshiram',
+  'Lucario', 'Carchacrok', 'Gardevoir', 'Ronflex', 'Evoli', 'Salamèche', 'Reptincel', 'Bulbizarre', 'Herbizarre',
+  'Carapuce', 'Carabaffe', 'Fantominus', 'Spectrum', 'Alakazam', 'Léviator', 'Magicarpe', 'Minidraco', 'Dracolosse',
+  'Porygon', 'Porygon2', 'Porygon-Z', 'Malamandre', 'Mortermure', 'Rugit-Lune', 'Garde-de-Fer', 'Pelage-Sablé',
+  'Paume-de-Fer', 'Hurle-Queue', 'Fongus-Furie', 'Flotte-Mèche', 'Hotte-de-Fer', 'Épine-de-Fer', 'Chef-de-Fer'
+];
 
 class OcrService {
   constructor() {
@@ -29,10 +43,9 @@ class OcrService {
     this.isInitializing = true;
     this.initPromise = (async () => {
       try {
-        // Use 'eng' language model: ultra-fast, lightweight (3MB), rock solid in all mobile browsers
         const worker = await createWorker('eng', 1, {
           logger: m => {
-            if (m.status === 'recognizing text' && window.__onOcrProgress) {
+            if (m.status === 'recognizing text' && typeof window !== 'undefined' && window.__onOcrProgress) {
               window.__onOcrProgress(m.progress);
             }
           }
@@ -52,10 +65,12 @@ class OcrService {
   }
 
   /**
-   * Scan card canvas
+   * Scan card canvas with multi-pass OCR
    */
   async scanCard(cardCanvas, onProgress = () => {}) {
-    window.__onOcrProgress = onProgress;
+    if (typeof window !== 'undefined') {
+      window.__onOcrProgress = onProgress;
+    }
     const worker = await this.getWorker();
 
     onProgress(0.2);
@@ -81,12 +96,19 @@ class OcrService {
   }
 
   /**
-   * Advanced Parser & Tokenizer
+   * Advanced Card Data Parser & Header Tokenizer
    */
   parseCardData(topText, fullText) {
     const combined = `${topText}\n${fullText}`;
 
-    // 1. Extract fraction numbers: XXX/YYY (e.g. 063/193, 053/217, 030/217, 201/217, 018/217)
+    // 1. Extract Set Code (ASC, ME02.5, PAL, SVI, SSP, SCR, TWM, TEF, PAF, PAR, MEW, OBF, etc.)
+    let setCodeCandidate = '';
+    const setMatch = combined.match(/\b(ASC|ME02\.5|MEE|PAL|SSP|SCR|TWM|TEF|PAF|PAR|MEW|OBF|SVI|CRZ|SIT|EVS|CRE|BST|VIV|DAA|SSH|SM\d*|XY\d*|BW\d*|DP\d*|BASE)\b/i);
+    if (setMatch) {
+      setCodeCandidate = setMatch[1].toUpperCase();
+    }
+
+    // 2. Extract Card Number & Fraction (e.g. 018/217, 201/217, 030/217, 093/217, 20127)
     let localIdCandidate = '';
     let totalInSetCandidate = '';
     const numbers = new Set();
@@ -95,25 +117,20 @@ class OcrService {
       .replace(/([0-9])\s*[Il|]\s*([0-9])/g, '$1/$2')
       .replace(/([0-9])\s*(\/)\s*([0-9])/g, '$1/$3');
 
+    // Standard Fraction Match: XXX/YYY
     const fracMatches = [...normalizedText.matchAll(/(\d{1,3})\s*\/\s*(\d{2,3})/g)];
     if (fracMatches.length > 0) {
       localIdCandidate = fracMatches[0][1];
       totalInSetCandidate = fracMatches[0][2];
       numbers.add(localIdCandidate);
-      numbers.add(totalInSetCandidate);
-    }
-
-    // Collect standalone 2-3 digit numbers (e.g. 190, 60, 110, 50, 063, 108)
-    const rawNumMatches = normalizedText.match(/\b\d{2,3}\b/g) || [];
-    for (const num of rawNumMatches) {
-      numbers.add(num);
-    }
-
-    // 2. Extract Set Code (PAL, ASC, MEE, ME02.5, ME, SVP, OBF, SSP, TWM, SVI, PAR, TEF, SCR, MEW, LOR, etc.)
-    let setCodeCandidate = '';
-    const setMatch = normalizedText.match(/\b(PAL|ASC|MEE|ME02\.5|ME|SVP|OBF|SSP|TWM|SVI|PAR|TEF|SCR|PRE|MEW|LOR|ASR|BRS|FST|EVS|CRE|BST|VIV|DAA|SSH)\b/i);
-    if (setMatch) {
-      setCodeCandidate = setMatch[1].toUpperCase();
+    } else {
+      // Corrupted OCR fraction match (e.g., 201217, 20127, 018217, 030217, 093217)
+      const corruptedMatch = normalizedText.match(/\b(0\d{2}|\d{2,3})\s*(217|193|197|165|142|102|162|151|198|182|223|200)\b/);
+      if (corruptedMatch) {
+        localIdCandidate = corruptedMatch[1];
+        totalInSetCandidate = corruptedMatch[2];
+        numbers.add(localIdCandidate);
+      }
     }
 
     // 3. Extract and Clean Candidate Words
@@ -129,7 +146,7 @@ class OcrService {
         lower.length < 3 ||
         STOP_WORDS.has(lower) ||
         seenWords.has(lower) ||
-        /^(png|jpg|jpeg|webp|media|img|file|screen|cromes|github)$/i.test(lower) ||
+        /^(png|jpg|jpeg|webp|media|img|file|screen|cromes|github|niveau|basic|base|pv|hp)$/i.test(lower) ||
         /^[0-9a-f]{4,}$/i.test(lower)
       ) {
         continue;
@@ -139,27 +156,49 @@ class OcrService {
       candidateWords.push(word);
     }
 
-    // 4. Primary Pokémon Name Extraction from Top Lines
-    const topClean = topText.replace(/\r\n/g, '\n').trim();
-    const topLines = topClean.split('\n').map(l => l.trim()).filter(Boolean);
+    // 4. Primary Pokémon / Trainer Name Extraction
     let primaryName = '';
 
-    for (const line of topLines) {
-      let candidate = line;
-      if (/^(BASE|BASIC|NIVEAU|STAGE|NIV|Évolution|Evolution|\d{4}|\w+\.pn)/i.test(candidate)) continue;
-      
-      candidate = candidate.replace(/(?:PV|pv|HP|hp|P\/?V|H\/?P)\s*\d+/gi, '');
-      candidate = candidate.replace(/[0-9]/g, '');
-      candidate = cleanWord(candidate);
+    // A. Check Top Header Lines First
+    const lines = combined.split('\n').map(l => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      // Match pattern: [BASE/NIVEAU/DRESSEUR] <NAME> [PV/HP xx]
+      const headerMatch = line.match(/(?:BASE|BASIC|NIVEAU\s*\d?|STAGE\s*\d?|DRESSEUR|TRAINER)?\s*([A-Za-zÀ-ÿ\s'-]+?)\s*(?:PV|HP|P\/V|H\/P|\d{2,3}\s*PV|\d{2,3}\s*HP|$)/i);
+      if (headerMatch && headerMatch[1]) {
+        let candidate = headerMatch[1].trim()
+          .replace(/^(BASE|BASIC|NIVEAU|STAGE|DRESSEUR|TRAINER|Évolution|Evolution)\s*/gi, '')
+          .replace(/\s*(PV|HP|P\/V|H\/P|\d+)$/gi, '')
+          .trim();
+        
+        candidate = cleanWord(candidate);
 
-      if (candidate.length >= 3 && !STOP_WORDS.has(candidate.toLowerCase())) {
-        primaryName = candidate;
-        break;
+        if (candidate.length >= 3 && !STOP_WORDS.has(candidate.toLowerCase()) && !/^(attaque|degats|faiblesse|resistance|retraite)$/i.test(candidate)) {
+          primaryName = candidate;
+          break;
+        }
       }
     }
 
+    // B. Dictionary & Fuzzy Matcher if primary name is still empty or corrupted
+    if (!primaryName || primaryName.length < 3) {
+      for (const word of candidateWords) {
+        const fuzzy = findFuzzyMatch(word);
+        if (fuzzy) {
+          primaryName = fuzzy;
+          break;
+        }
+      }
+    }
+
+    // C. Fallback to first valid candidate word
     if (!primaryName && candidateWords.length > 0) {
       primaryName = candidateWords[0];
+    }
+
+    // Final fuzzy polish
+    if (primaryName) {
+      const fuzzy = findFuzzyMatch(primaryName);
+      if (fuzzy) primaryName = fuzzy;
     }
 
     return {
@@ -178,6 +217,7 @@ function cleanWord(str) {
   let clean = str
     .replace(/[@#$_]/g, '')
     .replace(/[^\w\s\séèêëàâäôöûüçîï'-]/gi, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 
   const TYPO_MAP = {
@@ -192,7 +232,11 @@ function cleanWord(str) {
     'grotichont': 'Grotichon',
     'tissenbouie': 'Tissenboule',
     'sucroguin': 'Sucroquin',
-    'fantomlnus': 'Fantominus'
+    'fantomlnus': 'Fantominus',
+    'amos de la team rocket': 'Amos de la Team Rocket',
+    'amis de la team rocket': 'Amos de la Team Rocket',
+    'tissenboule de la team rocket': 'Tissenboule de la Team Rocket',
+    'tissenboule de la team rocker': 'Tissenboule de la Team Rocket'
   };
 
   const lower = clean.toLowerCase();
@@ -203,6 +247,43 @@ function cleanWord(str) {
   }
 
   return clean;
+}
+
+function findFuzzyMatch(str) {
+  if (!str || str.length < 3) return null;
+  const sLower = str.toLowerCase();
+
+  for (const name of COMMON_NAMES) {
+    const nLower = name.toLowerCase();
+    if (sLower === nLower) return name;
+    if (nLower.startsWith(sLower) || sLower.startsWith(nLower)) return name;
+
+    // Levenshtein distance check for short single-word names
+    if (!nLower.includes(' ') && !sLower.includes(' ') && Math.abs(nLower.length - sLower.length) <= 2) {
+      if (levenshteinDistance(sLower, nLower) <= 2) {
+        return name;
+      }
+    }
+  }
+  return null;
+}
+
+function levenshteinDistance(a, b) {
+  const matrix = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+  for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return matrix[a.length][b.length];
 }
 
 export const ocrService = new OcrService();

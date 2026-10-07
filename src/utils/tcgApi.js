@@ -4,18 +4,20 @@ const API_FR = 'https://api.tcgdex.net/v2/fr';
 const API_EN = 'https://api.tcgdex.net/v2/en';
 
 const SET_ALIASES = {
-  'PAL': 'sv02',   // Évolutions à Paldea
-  'ASC': 'me02.5', // Héros Transcendants
-  'MEE': 'mee',    // Mega Evolution Energies
-  'SSP': 'sv08',   // Étincelles Radieuses
-  'SCR': 'sv07',   // Couronne Stellaire
-  'TWM': 'sv06',   // Mascarade Crépusculaire
-  'TEF': 'sv05',   // Forces Temporelles
-  'PAF': 'sv04.5', // Destinées de Paldea
-  'PAR': 'sv04',   // Faille Paradoxe
-  'MEW': 'sv03.5', // 151
-  'OBF': 'sv03',   // Flammes Obsidiennes
-  'SVI': 'sv01',   // Écarlate et Violet
+  'PAL': 'sv02',    // Évolutions à Paldea
+  'ASC': 'me02.5',  // Héros Transcendants
+  'ME02.5': 'me02.5',
+  'MEE': 'mee',     // Mega Evolution Energies
+  'SSP': 'sv08',    // Étincelles Radieuses
+  'SCR': 'sv07',    // Couronne Stellaire
+  'TWM': 'sv06',    // Mascarade Crépusculaire
+  'TEF': 'sv05',    // Forces Temporelles
+  'PAF': 'sv04.5',  // Destinées de Paldea
+  'PAR': 'sv04',    // Faille Paradoxe
+  'MEW': 'sv03.5',  // 151
+  'OBF': 'sv03',    // Flammes Obsidiennes
+  'SVI': 'sv01',    // Écarlate et Violet
+  'PRE': 'sv08.5',  // Évolutions Prismatiques
   'CRZ': 'swsh12.5',
   'SIT': 'swsh12',
   'EVS': 'swsh7',
@@ -58,7 +60,14 @@ export async function searchCard(params) {
 
   const wordsToSearch = new Set();
   const searchName = (primaryName || name).trim();
-  if (searchName) wordsToSearch.add(searchName);
+  if (searchName) {
+    wordsToSearch.add(searchName);
+    // Also add root word if multi-word (e.g. "Tissenboule de la Team Rocket" -> "Tissenboule")
+    const parts = searchName.split(/\s+/);
+    if (parts.length > 1 && parts[0].length >= 3) {
+      wordsToSearch.add(parts[0]);
+    }
+  }
   for (const w of candidateWords) {
     if (w && w.length >= 3) wordsToSearch.add(w.trim());
   }
@@ -89,7 +98,7 @@ export async function searchCard(params) {
             if (res.ok) {
               const list = await res.json();
               for (const card of list) {
-                scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 60);
+                scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 120);
               }
             }
           } catch (e) {}
@@ -106,35 +115,39 @@ export async function searchCard(params) {
         if (res.ok) {
           const list = await res.json();
           for (const card of list) {
-            scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 20);
+            scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 30);
           }
         }
       } catch (e) {}
     }
   }
 
-  // --- STRATEGY 2 (Query by Numbers) ---
-  for (const num of Array.from(numbersToSearch).slice(0, 6)) {
-    const cleanNum = num.replace(/^0+/, '');
-    const paddedNum = num.padStart(3, '0');
-    const numsToTry = Array.from(new Set([cleanNum, paddedNum])).filter(Boolean);
+  // --- STRATEGY 2 (Query by Set + Numbers ONLY if Set or Total or Name is known) ---
+  // Protection against damage numbers generating false positives!
+  if (mappedSetId || targetTotal || searchName) {
+    for (const num of Array.from(numbersToSearch).slice(0, 4)) {
+      const cleanNum = num.replace(/^0+/, '');
+      const paddedNum = num.padStart(3, '0');
+      const numsToTry = Array.from(new Set([cleanNum, paddedNum])).filter(Boolean);
 
-    for (const idTry of numsToTry) {
-      for (const endpoint of searchEndpoints) {
-        try {
-          const res = await fetch(`${endpoint}/cards?localId=${encodeURIComponent(idTry)}`);
-          if (res.ok) {
-            const list = await res.json();
-            for (const card of list) {
-              scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 10);
+      for (const idTry of numsToTry) {
+        for (const endpoint of searchEndpoints) {
+          try {
+            const res = await fetch(`${endpoint}/cards?localId=${encodeURIComponent(idTry)}`);
+            if (res.ok) {
+              const list = await res.json();
+              for (const card of list) {
+                scoreAndAddCandidate(card, candidateMap, { searchName, wordsToSearch, numbersToSearch, targetTotal, mappedSetId }, 10);
+              }
             }
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }
       }
     }
   }
 
   const sorted = Array.from(candidateMap.values())
+    .filter(c => c.score >= 50)
     .sort((a, b) => b.score - a.score)
     .map(c => c.card);
 
@@ -168,7 +181,9 @@ function scoreAndAddCandidate(card, map, ctx, baseBonus = 0) {
   // 1. Name Match
   const targetLower = (ctx.searchName || '').toLowerCase().replace(/[-_']/g, ' ');
   if (targetLower) {
-    if (cardName === targetLower || cardName.startsWith(targetLower)) {
+    if (cardName === targetLower) {
+      score += 120;
+    } else if (cardName.startsWith(targetLower) || targetLower.startsWith(cardName)) {
       score += 100;
     } else if (cardName.includes(targetLower) || targetLower.includes(cardName)) {
       score += 80;
@@ -184,7 +199,7 @@ function scoreAndAddCandidate(card, map, ctx, baseBonus = 0) {
   for (const word of ctx.wordsToSearch) {
     const wLower = word.toLowerCase().replace(/[-_']/g, ' ');
     if (cardName.includes(wLower)) {
-      score += 40;
+      score += 30;
       break;
     }
   }
@@ -193,14 +208,14 @@ function scoreAndAddCandidate(card, map, ctx, baseBonus = 0) {
   for (const num of ctx.numbersToSearch) {
     const cleanN = String(num).replace(/^0+/, '');
     if (cleanN === cleanCardId) {
-      score += 60;
+      score += 80;
       break;
     }
   }
 
   // 3. Set Code / Series Match
   if (ctx.mappedSetId && card.id.toLowerCase().includes(ctx.mappedSetId)) {
-    score += 40;
+    score += 70;
   }
 
   if (!map.has(card.id) || map.get(card.id).score < score) {

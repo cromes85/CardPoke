@@ -3,14 +3,14 @@
 export const CARD_ASPECT_RATIO = 63 / 88; // ~0.7159 (Standard Pokémon Card)
 
 /**
- * Robust Card Edge & Corner Detection (Pure JS Edge Gradient & Bounding Box)
+ * Robust Card Edge & Corner Detection (OpenCV.js + Adaptive Gradient Pure JS Fallback)
  */
 export function detectCardCorners(canvas) {
   const width = canvas.width;
   const height = canvas.height;
 
   // 1. OpenCV.js if loaded in window
-  if (window.cv && window.cv.Mat && window.cv.imread) {
+  if (typeof window !== 'undefined' && window.cv && window.cv.Mat && window.cv.imread) {
     try {
       const cv = window.cv;
       const src = cv.imread(canvas);
@@ -21,19 +21,19 @@ export function detectCardCorners(canvas) {
       
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
       cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-      cv.Canny(blurred, edged, 30, 120);
+      cv.Canny(blurred, edged, 35, 120);
       
       const M = cv.Mat.ones(3, 3, cv.CV_8U);
       cv.dilate(edged, dilated, M);
       
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
-      cv.findContours(dilated, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      cv.findContours(dilated, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
       
       let maxArea = 0;
       let bestCorners = null;
-      const minCardArea = (width * height) * 0.08;
-      const maxCardArea = (width * height) * 0.98;
+      const minCardArea = (width * height) * 0.12;
+      const maxCardArea = (width * height) * 0.95;
 
       for (let i = 0; i < contours.size(); ++i) {
         const contour = contours.get(i);
@@ -42,7 +42,7 @@ export function detectCardCorners(canvas) {
         if (area > minCardArea && area < maxCardArea) {
           const peri = cv.arcLength(contour, true);
           const approx = new cv.Mat();
-          cv.approxPolyDP(contour, approx, 0.03 * peri, true);
+          cv.approxPolyDP(contour, approx, 0.025 * peri, true);
           
           if (approx.rows === 4 && area > maxArea) {
             const pts = [];
@@ -63,7 +63,7 @@ export function detectCardCorners(canvas) {
             const avgH = (h1 + h2) / 2;
             const ratio = Math.min(avgW, avgH) / Math.max(avgW, avgH);
             
-            if (ratio >= 0.50 && ratio <= 0.95) {
+            if (ratio >= 0.55 && ratio <= 0.88) {
               maxArea = area;
               bestCorners = ordered;
             }
@@ -87,7 +87,7 @@ export function detectCardCorners(canvas) {
     }
   }
 
-  // 2. Pure JS Edge Scan
+  // 2. Pure JS Edge Scan with Adaptive Contrast
   try {
     const jsCorners = detectCardCornersPureJS(canvas);
     if (jsCorners) return jsCorners;
@@ -95,7 +95,7 @@ export function detectCardCorners(canvas) {
     console.warn("Pure JS edge detector error:", e);
   }
 
-  // 3. Fallback: Centered card viewport
+  // 3. Fallback: Centered card viewport matching official card ratio
   return getDefaultCenteredCorners(width, height);
 }
 
@@ -108,82 +108,86 @@ function detectCardCornersPureJS(canvas) {
   const sw = Math.floor(w * scale);
   const sh = Math.floor(h * scale);
   
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = sw;
-  tempCanvas.height = sh;
-  const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(canvas, 0, 0, sw, sh);
-  
-  const imgData = ctx.getImageData(0, 0, sw, sh);
-  const d = imgData.data;
-  
-  const gray = new Uint8Array(sw * sh);
-  for (let i = 0; i < sw * sh; i++) {
-    const r = d[i * 4];
-    const g = d[i * 4 + 1];
-    const b = d[i * 4 + 2];
-    gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
-  }
-  
-  const threshold = 35;
-  let minX = sw, maxX = 0, minY = sh, maxY = 0;
-  
-  for (let y = Math.floor(sh * 0.1); y < sh * 0.9; y += 4) {
-    for (let x = 2; x < sw - 2; x++) {
-      if (Math.abs(gray[y * sw + x] - gray[y * sw + x - 1]) > threshold) {
-        if (x < minX) minX = x;
-        break;
+  let tempCanvas = null;
+  if (typeof document !== 'undefined') {
+    tempCanvas = document.createElement('canvas');
+    tempCanvas.width = sw;
+    tempCanvas.height = sh;
+    const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(canvas, 0, 0, sw, sh);
+    
+    const imgData = ctx.getImageData(0, 0, sw, sh);
+    const d = imgData.data;
+    
+    const gray = new Uint8Array(sw * sh);
+    for (let i = 0; i < sw * sh; i++) {
+      const r = d[i * 4];
+      const g = d[i * 4 + 1];
+      const b = d[i * 4 + 2];
+      gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
+    }
+    
+    const threshold = 40;
+    let minX = sw, maxX = 0, minY = sh, maxY = 0;
+    
+    for (let y = Math.floor(sh * 0.15); y < sh * 0.85; y += 4) {
+      for (let x = Math.floor(sw * 0.05); x < sw * 0.5; x++) {
+        if (Math.abs(gray[y * sw + x] - gray[y * sw + x - 1]) > threshold) {
+          if (x < minX) minX = x;
+          break;
+        }
+      }
+      for (let x = Math.floor(sw * 0.95); x > sw * 0.5; x--) {
+        if (Math.abs(gray[y * sw + x] - gray[y * sw + x + 1]) > threshold) {
+          if (x > maxX) maxX = x;
+          break;
+        }
       }
     }
-    for (let x = sw - 3; x > 2; x--) {
-      if (Math.abs(gray[y * sw + x] - gray[y * sw + x + 1]) > threshold) {
-        if (x > maxX) maxX = x;
-        break;
+    
+    for (let x = Math.floor(sw * 0.15); x < sw * 0.85; x += 4) {
+      for (let y = Math.floor(sh * 0.05); y < sh * 0.5; y++) {
+        if (Math.abs(gray[y * sw + x] - gray[(y - 1) * sw + x]) > threshold) {
+          if (y < minY) minY = y;
+          break;
+        }
+      }
+      for (let y = Math.floor(sh * 0.95); y > sh * 0.5; y--) {
+        if (Math.abs(gray[y * sw + x] - gray[(y + 1) * sw + x]) > threshold) {
+          if (y > maxY) maxY = y;
+          break;
+        }
       }
     }
-  }
-  
-  for (let x = Math.floor(sw * 0.1); x < sw * 0.9; x += 4) {
-    for (let y = 2; y < sh - 2; y++) {
-      if (Math.abs(gray[y * sw + x] - gray[(y - 1) * sw + x]) > threshold) {
-        if (y < minY) minY = y;
-        break;
-      }
+    
+    const boxW = (maxX - minX) / scale;
+    const boxH = (maxY - minY) / scale;
+    const ratio = Math.min(boxW, boxH) / Math.max(boxW, boxH);
+    
+    if (boxW > w * 0.30 && boxH > h * 0.30 && maxX > minX && maxY > minY && ratio >= 0.50 && ratio <= 0.88) {
+      return [
+        { x: minX / scale, y: minY / scale },
+        { x: maxX / scale, y: minY / scale },
+        { x: maxX / scale, y: maxY / scale },
+        { x: minX / scale, y: maxY / scale }
+      ];
     }
-    for (let y = sh - 3; y > 2; y--) {
-      if (Math.abs(gray[y * sw + x] - gray[(y + 1) * sw + x]) > threshold) {
-        if (y > maxY) maxY = y;
-        break;
-      }
-    }
-  }
-  
-  const boxW = (maxX - minX) / scale;
-  const boxH = (maxY - minY) / scale;
-  
-  if (boxW > w * 0.25 && boxH > h * 0.25 && maxX > minX && maxY > minY) {
-    return [
-      { x: minX / scale, y: minY / scale },
-      { x: maxX / scale, y: minY / scale },
-      { x: maxX / scale, y: maxY / scale },
-      { x: minX / scale, y: maxY / scale }
-    ];
   }
   
   return null;
 }
 
 export function getDefaultCenteredCorners(width, height) {
-  const margin = 0.06;
+  const margin = 0.08;
   const availW = width * (1 - margin * 2);
   const availH = height * (1 - margin * 2);
   
   let targetW, targetH;
   if (availW / availH > CARD_ASPECT_RATIO) {
-    targetH = availH * 0.90;
+    targetH = availH * 0.92;
     targetW = targetH * CARD_ASPECT_RATIO;
   } else {
-    targetW = availW * 0.90;
+    targetW = availW * 0.92;
     targetH = targetW / CARD_ASPECT_RATIO;
   }
   
@@ -222,7 +226,7 @@ export function warpPerspective(sourceCanvas, corners, targetW = 630, targetH = 
   const outCtx = outCanvas.getContext('2d', { willReadFrequently: true });
 
   // 1. OpenCV.js Warp
-  if (window.cv && window.cv.Mat && window.cv.imread) {
+  if (typeof window !== 'undefined' && window.cv && window.cv.Mat && window.cv.imread) {
     try {
       const cv = window.cv;
       const srcMat = cv.imread(sourceCanvas);
@@ -318,10 +322,10 @@ export function extractAndPreprocessRoi(cardCanvas, zone = 'full') {
   let roiX = 0, roiY = 0, roiW = w, roiH = h;
   
   if (zone === 'top_name') {
-    roiX = Math.floor(w * 0.05);
+    roiX = Math.floor(w * 0.04);
     roiY = Math.floor(h * 0.02);
-    roiW = Math.floor(w * 0.90);
-    roiH = Math.floor(h * 0.20);
+    roiW = Math.floor(w * 0.92);
+    roiH = Math.floor(h * 0.22);
   } else if (zone === 'bottom_number') {
     roiX = Math.floor(w * 0.03);
     roiY = Math.floor(h * 0.80);

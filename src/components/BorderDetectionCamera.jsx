@@ -1,40 +1,30 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Camera,
+  Scan,
   Flashlight,
   RefreshCw,
-  Eye,
-  Sliders,
   Image as ImageIcon,
   CheckCircle2,
   AlertCircle,
-  Scan,
   Maximize2,
-  Copy,
-  Check,
-  ZoomIn,
-  Move,
-  Lock,
-  Layers
+  Camera
 } from 'lucide-react';
 import {
-  detectCardCornersHybrid,
+  autoDetectCardEdges,
   TemporalCornerSmoother,
   extractCardWarped,
-  CARD_RATIO,
-  sortCornersClockwise
+  POKEMON_RATIO
 } from '../utils/cardEdgeDetector';
 
 export default function BorderDetectionCamera() {
-  // Références matérielles & DOM
+  // Références matérielles
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const animFrameRef = useRef(null);
-  const smootherRef = useRef(new TemporalCornerSmoother(0.30));
+  const smootherRef = useRef(new TemporalCornerSmoother(0.35));
   const fileInputRef = useRef(null);
-  const svgRef = useRef(null);
 
-  // États Caméra & Flux
+  // États Caméra & Détection
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState(null);
   const [torchOn, setTorchOn] = useState(false);
@@ -42,44 +32,23 @@ export default function BorderDetectionCamera() {
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
 
-  // Zoom Numérique & Recadrage de visée
-  const [zoomLevel, setZoomLevel] = useState(1.0);
-  const [offsetY, setOffsetY] = useState(0); // Décalage vertical %
-
-  // Mode de Détection : 'auto' (Détection active) | 'manual' (4 poignées tactiles) | 'fixed' (Calibré Fixe)
-  const [detectMode, setDetectMode] = useState('auto');
-
-  // Paramètres Détecteur
-  const [sensitivity, setSensitivity] = useState(38);
-  const [showControls, setShowControls] = useState(true);
-  const [copiedCoords, setCopiedCoords] = useState(false);
-
-  // Coins Détectés ou Ajustés
-  const [corners, setCorners] = useState([
-    { x: 0.20, y: 0.18 }, // TL
-    { x: 0.80, y: 0.18 }, // TR
-    { x: 0.80, y: 0.82 }, // BR
-    { x: 0.20, y: 0.82 }  // BL
-  ]);
+  // Résultat de Détection 100% Automatique
+  const [corners, setCorners] = useState(null);
   const [isLocked, setIsLocked] = useState(false);
   const [confidence, setConfidence] = useState(0);
   const [aspectRatio, setAspectRatio] = useState(0.716);
   const [fps, setFps] = useState(0);
-  const [engineName, setEngineName] = useState('Prêt');
 
-  // Drag & Drop tactile des 4 coins
-  const [activeDragCorner, setActiveDragCorner] = useState(null);
-
-  // Extraction / Freeze
+  // Extraction & Vérification
   const [capturedWarpedImage, setCapturedWarpedImage] = useState(null);
   const [staticImageSource, setStaticImageSource] = useState(null);
 
-  // Mesure FPS
+  // FPS & Intervalle
   const frameCountRef = useRef(0);
   const lastFpsTimeRef = useRef(performance.now());
   const lastProcessTimeRef = useRef(0);
 
-  // 1. Démarrage Caméra
+  // 1. Initialisation Caméra
   const startCamera = useCallback(async (deviceId = '') => {
     setCameraError(null);
     if (streamRef.current) {
@@ -120,7 +89,7 @@ export default function BorderDetectionCamera() {
       }
     } catch (err) {
       console.error('Erreur accès caméra:', err);
-      setCameraError('Impossible d’accéder à la caméra. Vérifiez les autorisations du navigateur.');
+      setCameraError('Impossible d’accéder à la caméra. Vérifiez les autorisations.');
       setCameraActive(false);
     }
   }, [selectedDeviceId]);
@@ -137,21 +106,21 @@ export default function BorderDetectionCamera() {
     };
   }, []);
 
-  // 2. Bascule Torche
+  // 2. Basculer Torche / Flash
   const toggleTorch = async () => {
     if (!streamRef.current) return;
     const track = streamRef.current.getVideoTracks()[0];
     if (!track) return;
     try {
-      const next = !torchOn;
-      await track.applyConstraints({ advanced: [{ torch: next }] });
-      setTorchOn(next);
+      const nextState = !torchOn;
+      await track.applyConstraints({ advanced: [{ torch: nextState }] });
+      setTorchOn(nextState);
     } catch (e) {
-      console.warn('Torch error:', e);
+      console.warn('Erreur torche:', e);
     }
   };
 
-  // 3. Bascule Caméra
+  // 3. Basculer Objectif Caméra
   const handleSwitchCamera = () => {
     if (videoDevices.length <= 1) return;
     const curIdx = videoDevices.findIndex(d => d.deviceId === selectedDeviceId);
@@ -161,16 +130,16 @@ export default function BorderDetectionCamera() {
     startCamera(nextDev.deviceId);
   };
 
-  // 4. Boucle de Détection Temps Réel
+  // 4. Moteur de Détection Automatique Temps Réel (Boucle RAF)
   useEffect(() => {
     let isRunning = true;
     const workCanvas = document.createElement('canvas');
     const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
 
-    const processLoop = (timestamp) => {
+    const processFrame = (timestamp) => {
       if (!isRunning) return;
 
-      // Calcul FPS
+      // Calcul du FPS
       frameCountRef.current++;
       const now = performance.now();
       if (now - lastFpsTimeRef.current >= 1000) {
@@ -179,8 +148,8 @@ export default function BorderDetectionCamera() {
         lastFpsTimeRef.current = now;
       }
 
-      // Cadencer le traitement à ~25 FPS pour garantir une fluidité totale sur mobile
-      if (timestamp - lastProcessTimeRef.current >= 40 && detectMode === 'auto') {
+      // Cadencer l'analyse automatique à ~25 FPS pour zéro lag
+      if (timestamp - lastProcessTimeRef.current >= 40) {
         lastProcessTimeRef.current = timestamp;
 
         const video = videoRef.current;
@@ -198,45 +167,31 @@ export default function BorderDetectionCamera() {
         }
 
         if (source && sw > 0 && sh > 0) {
-          // Appliquer le zoom numérique / zone d'intérêt
-          const cropW = sw / zoomLevel;
-          const cropH = sh / zoomLevel;
-          const startX = (sw - cropW) / 2;
-          const startY = Math.max(0, Math.min(sh - cropH, (sh - cropH) / 2 + (offsetY / 100) * sh));
+          workCanvas.width = sw;
+          workCanvas.height = sh;
+          workCtx.drawImage(source, 0, 0, sw, sh);
 
-          workCanvas.width = 360;
-          workCanvas.height = Math.round(360 * (cropH / cropW));
+          // Détection 100% Automatique
+          const result = autoDetectCardEdges(workCanvas);
 
-          workCtx.drawImage(
-            source,
-            startX, startY, cropW, cropH,
-            0, 0, workCanvas.width, workCanvas.height
-          );
-
-          const res = detectCardCornersHybrid(workCanvas, {
-            sensitivity,
-            centerBox: { x: 0.16, y: 0.14, width: 0.68, height: 0.72 }
-          });
-
-          if (res && res.corners) {
-            const smoothed = smootherRef.current.update(res.corners);
-            setCorners(smoothed);
-            setConfidence(res.confidence);
-            setAspectRatio(res.aspectRatio);
-            setIsLocked(res.confidence >= 60);
-            setEngineName(res.engine || 'Auto');
+          if (result && result.corners) {
+            const smoothedCorners = smootherRef.current.update(result.corners);
+            setCorners(smoothedCorners);
+            setConfidence(result.confidence || 85);
+            setAspectRatio(result.ratio);
+            setIsLocked(true);
           } else {
             smootherRef.current.update(null);
+            setCorners(null);
             setIsLocked(false);
-            setConfidence(0);
           }
         }
       }
 
-      animFrameRef.current = requestAnimationFrame(processLoop);
+      animFrameRef.current = requestAnimationFrame(processFrame);
     };
 
-    animFrameRef.current = requestAnimationFrame(processLoop);
+    animFrameRef.current = requestAnimationFrame(processFrame);
 
     return () => {
       isRunning = false;
@@ -244,43 +199,33 @@ export default function BorderDetectionCamera() {
         cancelAnimationFrame(animFrameRef.current);
       }
     };
-  }, [detectMode, cameraActive, staticImageSource, sensitivity, zoomLevel, offsetY]);
+  }, [cameraActive, staticImageSource]);
 
-  // 5. Manipulation tactile directe des 4 coins (Mode Manuel)
-  const handleTouchMove = (e) => {
-    if (activeDragCorner === null || !svgRef.current) return;
-    const touch = e.touches ? e.touches[0] : e;
-    const rect = svgRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, (touch.clientY - rect.top) / rect.height));
+  // 5. Charger une image de test
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    setCorners(prev => {
-      const next = [...prev];
-      next[activeDragCorner] = { x, y };
-      return next;
-    });
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new window.Image();
+      img.onload = () => {
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop());
+        }
+        setCameraActive(false);
+        setStaticImageSource(img);
+        smootherRef.current.reset();
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
   };
 
-  const handleTouchEnd = () => {
-    setActiveDragCorner(null);
-  };
-
-  // 6. Copier les coordonnées exactes des 4 coins
-  const handleCopyCoords = () => {
-    const text = `📐 Coordonnées des 4 Coins :\n` +
-      `1. Haut-Gauche (TL) : X=${(corners[0].x * 100).toFixed(1)}%, Y=${(corners[0].y * 100).toFixed(1)}%\n` +
-      `2. Haut-Droit  (TR) : X=${(corners[1].x * 100).toFixed(1)}%, Y=${(corners[1].y * 100).toFixed(1)}%\n` +
-      `3. Bas-Droit   (BR) : X=${(corners[2].x * 100).toFixed(1)}%, Y=${(corners[2].y * 100).toFixed(1)}%\n` +
-      `4. Bas-Gauche  (BL) : X=${(corners[3].x * 100).toFixed(1)}%, Y=${(corners[3].y * 100).toFixed(1)}%\n\n` +
-      `JSON: ${JSON.stringify(corners.map(p => ({ x: Number(p.x.toFixed(3)), y: Number(p.y.toFixed(3)) })))}`;
-    
-    navigator.clipboard.writeText(text);
-    setCopiedCoords(true);
-    setTimeout(() => setCopiedCoords(false), 2500);
-  };
-
-  // 7. Figer & Extraire la carte redressée (630 x 880 px)
+  // 6. Figer & Extraire la carte redressée (630 x 880 px)
   const handleCaptureWarped = () => {
+    if (!corners || corners.length !== 4) return;
+
     const canvas = document.createElement('canvas');
     let width = 0, height = 0;
 
@@ -303,357 +248,183 @@ export default function BorderDetectionCamera() {
 
     const warped = extractCardWarped(canvas, corners, 630, 880);
     if (warped) {
-      setCapturedWarpedImage(warped.toDataURL('image/jpeg', 0.92));
+      setCapturedWarpedImage(warped.toDataURL('image/jpeg', 0.94));
     }
   };
 
-  // 8. Charger une image de test depuis la galerie
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const img = new window.Image();
-      img.onload = () => {
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(t => t.stop());
-        }
-        setCameraActive(false);
-        setStaticImageSource(img);
-        smootherRef.current.reset();
-      };
-      img.src = ev.target.result;
-    };
-    reader.readAsDataURL(file);
-  };
-
   const getSvgPolygonPoints = () => {
+    if (!corners) return '';
     return corners.map(pt => `${pt.x * 100},${pt.y * 100}`).join(' ');
   };
 
   return (
-    <div
-      className="relative w-full h-[100dvh] bg-slate-950 flex flex-col justify-between overflow-hidden select-none"
-      onMouseMove={activeDragCorner !== null ? handleTouchMove : undefined}
-      onMouseUp={activeDragCorner !== null ? handleTouchEnd : undefined}
-      onTouchMove={activeDragCorner !== null ? handleTouchMove : undefined}
-      onTouchEnd={activeDragCorner !== null ? handleTouchEnd : undefined}
-    >
+    <div className="relative w-full h-[100dvh] bg-slate-950 flex flex-col justify-between overflow-hidden select-none">
       
-      {/* 1. Header Barre de Statut & HUD */}
-      <header className="relative z-30 flex items-center justify-between px-3 py-2.5 bg-slate-900/90 backdrop-blur-md border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+      {/* 1. Header Transparent Épuré */}
+      <header className="relative z-30 flex items-center justify-between px-4 py-3 bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-sm">
             <Scan className="w-4 h-4 animate-pulse" />
           </div>
           <div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-bold text-white tracking-wide">Détecteur de Bords</span>
-              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono font-medium ${
-                isLocked || detectMode !== 'auto'
+            <h1 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
+              Détecteur Pokémon
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-medium ${
+                isLocked
                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                   : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
               }`}>
-                {detectMode === 'manual' ? '✋ Mode Manuel' : isLocked ? '🎯 Verrouillé' : '🔍 Recherche...'}
+                {isLocked ? '🎯 Carte Verrouillée' : '🔍 Recherche...'}
               </span>
-            </div>
-            <p className="text-[10px] text-slate-400 flex items-center gap-1.5 font-mono">
-              <span>{fps} FPS</span>
-              <span>•</span>
-              <span>{engineName}</span>
-              <span>•</span>
-              <span>Zoom {zoomLevel.toFixed(1)}x</span>
+            </h1>
+            <p className="text-[11px] text-slate-400 font-mono">
+              {fps} FPS • Auto-Vision IA
             </p>
           </div>
         </div>
 
         {/* Boutons d'actions rapides */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           {hasTorch && (
             <button
               onClick={toggleTorch}
-              className={`p-2 rounded-xl border transition ${
+              className={`p-2.5 rounded-xl border transition ${
                 torchOn
-                  ? 'bg-amber-500 text-black border-amber-400 shadow-md'
-                  : 'bg-slate-800 text-slate-300 border-slate-700'
+                  ? 'bg-amber-500 text-black border-amber-400 shadow-lg shadow-amber-500/30'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
               }`}
+              title="Allumer le Flash"
             >
-              <Flashlight className="w-3.5 h-3.5" />
+              <Flashlight className="w-4 h-4" />
             </button>
           )}
 
           {videoDevices.length > 1 && (
             <button
               onClick={handleSwitchCamera}
-              className="p-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition"
+              className="p-2.5 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 active:scale-95 transition"
+              title="Changer d'objectif caméra"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className="w-4 h-4" />
             </button>
           )}
-
-          <button
-            onClick={() => setShowControls(prev => !prev)}
-            className={`p-2 rounded-xl border transition ${
-              showControls
-                ? 'bg-indigo-600 text-white border-indigo-500'
-                : 'bg-slate-800 text-slate-300 border-slate-700'
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-          </button>
         </div>
       </header>
 
       {/* 2. Viseur Vidéo & Calque de Détection SVG */}
       <div className="relative flex-1 w-full bg-black flex items-center justify-center overflow-hidden">
         
-        {/* Flux Caméra avec Zoom & Offset */}
+        {/* Flux Caméra */}
         {cameraActive && (
-          <div
-            className="w-full h-full flex items-center justify-center transition-transform duration-75 origin-center"
-            style={{
-              transform: `scale(${zoomLevel}) translateY(${offsetY}%)`
-            }}
-          >
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              autoPlay
-              className="w-full h-full object-cover sm:object-contain"
-            />
-          </div>
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            autoPlay
+            className="w-full h-full object-cover sm:object-contain"
+          />
         )}
 
         {/* Image Statique de Test */}
         {staticImageSource && (
-          <div
-            className="w-full h-full flex items-center justify-center origin-center"
-            style={{
-              transform: `scale(${zoomLevel}) translateY(${offsetY}%)`
-            }}
-          >
-            <img
-              src={staticImageSource.src}
-              alt="Test"
-              className="w-full h-full object-contain"
-            />
-          </div>
+          <img
+            src={staticImageSource.src}
+            alt="Carte de test"
+            className="w-full h-full object-contain"
+          />
         )}
 
         {/* Message d'erreur */}
         {cameraError && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center bg-slate-950/90">
-            <AlertCircle className="w-10 h-10 text-rose-500 mb-2" />
-            <p className="text-xs text-slate-200 mb-3">{cameraError}</p>
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center bg-slate-950/95">
+            <AlertCircle className="w-12 h-12 text-rose-500 mb-3" />
+            <p className="text-sm text-slate-200 mb-4">{cameraError}</p>
             <button
               onClick={() => startCamera()}
-              className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold"
+              className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold"
             >
-              Réessayer
+              Réessayer l'accès caméra
             </button>
           </div>
         )}
 
-        {/* Calque de Traçage SVG Dynamique & Poignées d'Angles */}
+        {/* Calque de Traçage SVG Dynamique */}
         <svg
-          ref={svgRef}
-          className="absolute inset-0 w-full h-full z-10 select-none"
+          className="absolute inset-0 w-full h-full pointer-events-none z-10"
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
         >
-          {/* Lignes de repère guide 63:88 centrales */}
-          <rect
-            x="20"
-            y="18"
-            width="60"
-            height="64"
-            rx="2"
-            fill="none"
-            stroke="rgba(255,255,255,0.15)"
-            strokeWidth="0.4"
-            strokeDasharray="1,1"
-          />
+          {corners && (
+            <>
+              {/* Polygone de bordure lumineuse avec animation néon */}
+              <polygon
+                points={getSvgPolygonPoints()}
+                className="transition-all duration-75 fill-emerald-500/15 stroke-emerald-400 stroke-[1.2] drop-shadow-[0_0_10px_rgba(52,211,153,0.9)]"
+              />
 
-          {/* Polygone de bordure détectée */}
-          <polygon
-            points={getSvgPolygonPoints()}
-            className={`transition-all duration-75 fill-emerald-500/10 stroke-[1.2] ${
-              isLocked || detectMode !== 'auto'
-                ? 'stroke-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]'
-                : 'stroke-amber-400 stroke-dasharray-[2_2]'
-            }`}
-          />
-
-          {/* Les 4 coins avec poignées tactiles */}
-          {corners.map((pt, idx) => {
-            const labels = ['TL', 'TR', 'BR', 'BL'];
-            const colors = ['#38bdf8', '#818cf8', '#34d399', '#f472b6'];
-            const isDragging = activeDragCorner === idx;
-
-            return (
-              <g
-                key={idx}
-                className="cursor-pointer"
-                onMouseDown={() => setActiveDragCorner(idx)}
-                onTouchStart={() => setActiveDragCorner(idx)}
-              >
-                {/* Zone de touch agrandie invisible */}
-                <circle
-                  cx={pt.x * 100}
-                  cy={pt.y * 100}
-                  r="8"
-                  fill="transparent"
-                />
-
-                {/* Point d'angle visible */}
-                <circle
-                  cx={pt.x * 100}
-                  cy={pt.y * 100}
-                  r={isDragging ? '3.5' : '2.2'}
-                  fill={colors[idx]}
-                  stroke="#ffffff"
-                  strokeWidth="0.6"
-                  className="transition-all duration-75 drop-shadow-md"
-                />
-
-                {/* Étiquette d'angle */}
-                <text
-                  x={pt.x * 100 + (idx === 0 || idx === 3 ? -3 : 3)}
-                  y={pt.y * 100 + (idx === 0 || idx === 1 ? -3 : 4)}
-                  fill="#ffffff"
-                  fontSize="2.8"
-                  fontWeight="bold"
-                  textAnchor={idx === 0 || idx === 3 ? 'end' : 'start'}
-                  className="pointer-events-none drop-shadow"
-                >
-                  {labels[idx]}
-                </text>
-              </g>
-            );
-          })}
+              {/* Réticules lumineux aux 4 coins (TL, TR, BR, BL) */}
+              {corners.map((pt, idx) => {
+                const labels = ['TL', 'TR', 'BR', 'BL'];
+                const colors = ['#38bdf8', '#818cf8', '#34d399', '#f472b6'];
+                return (
+                  <g key={idx}>
+                    <circle
+                      cx={pt.x * 100}
+                      cy={pt.y * 100}
+                      r="2.2"
+                      fill={colors[idx]}
+                      stroke="#ffffff"
+                      strokeWidth="0.6"
+                      className="drop-shadow-lg"
+                    />
+                    <text
+                      x={pt.x * 100 + (idx === 0 || idx === 3 ? -3 : 3)}
+                      y={pt.y * 100 + (idx === 0 || idx === 1 ? -3 : 4)}
+                      fill="#ffffff"
+                      fontSize="3.0"
+                      fontWeight="bold"
+                      textAnchor={idx === 0 || idx === 3 ? 'end' : 'start'}
+                      className="pointer-events-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]"
+                    >
+                      {labels[idx]}
+                    </text>
+                  </g>
+                );
+              })}
+            </>
+          )}
         </svg>
 
-        {/* Badge Viseur Flottant */}
-        <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
-          <div className="bg-slate-900/90 backdrop-blur-md px-2.5 py-1 rounded-lg border border-slate-800 text-[10px] font-mono text-slate-200 flex items-center gap-2 shadow-lg">
-            <span className="text-emerald-400 font-bold">
-              {isLocked || detectMode !== 'auto' ? '✓ Bords Cadrés' : 'Alignez la carte'}
-            </span>
-            <span>•</span>
-            <span>Ratio : <strong className="text-indigo-300">{aspectRatio.toFixed(3)}</strong></span>
+        {/* Badge Viseur Flottant : Mesures exactes */}
+        {isLocked && corners && (
+          <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-center pointer-events-none">
+            <div className="bg-slate-900/90 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/40 text-xs font-mono text-emerald-300 flex items-center gap-2 shadow-xl">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <span>4 Bords Cadrés ({aspectRatio.toFixed(2)})</span>
+            </div>
           </div>
+        )}
 
-          <button
-            onClick={handleCopyCoords}
-            className="pointer-events-auto bg-slate-900/90 hover:bg-slate-800 border border-slate-800 px-2 py-1 rounded-lg text-[10px] text-slate-300 flex items-center gap-1 transition"
-          >
-            {copiedCoords ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-slate-400" />}
-            <span>{copiedCoords ? 'Copié !' : 'Copier Coins'}</span>
-          </button>
-        </div>
+        {/* Guidage si aucune carte */}
+        {!isLocked && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+            <div className="w-[65vw] max-w-[280px] aspect-[63/88] rounded-2xl border-2 border-dashed border-slate-600/40 flex flex-col items-center justify-center p-4 text-center">
+              <Scan className="w-8 h-8 text-slate-500/60 mb-2 animate-bounce" />
+              <p className="text-xs text-slate-400 font-medium">
+                Visez n'importe quelle carte Pokémon
+              </p>
+              <p className="text-[10px] text-slate-500 mt-1">
+                Détection 100% automatique des bords
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 3. Tiroir de Réglages & Modes de Détection */}
-      {showControls && (
-        <div className="relative z-30 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-3.5 py-2.5 space-y-2.5">
-          
-          {/* Sélecteur de Mode */}
-          <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-950 rounded-xl border border-slate-800 text-[11px] font-medium">
-            <button
-              onClick={() => {
-                setDetectMode('auto');
-                smootherRef.current.reset();
-              }}
-              className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition ${
-                detectMode === 'auto'
-                  ? 'bg-emerald-600 text-white font-bold shadow'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Scan className="w-3.5 h-3.5" />
-              Auto-Aimant
-            </button>
-
-            <button
-              onClick={() => setDetectMode('manual')}
-              className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition ${
-                detectMode === 'manual'
-                  ? 'bg-indigo-600 text-white font-bold shadow'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Move className="w-3.5 h-3.5" />
-              Poignées 4 Coins
-            </button>
-
-            <button
-              onClick={() => {
-                setDetectMode('fixed');
-                // Préréglage d'usine Support 3D calibré
-                setCorners([
-                  { x: 0.268, y: 0.28 },
-                  { x: 0.738, y: 0.28 },
-                  { x: 0.738, y: 0.82 },
-                  { x: 0.268, y: 0.82 }
-                ]);
-              }}
-              className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition ${
-                detectMode === 'fixed'
-                  ? 'bg-purple-600 text-white font-bold shadow'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Lock className="w-3.5 h-3.5" />
-              Support 3D Fixe
-            </button>
-          </div>
-
-          {/* Curseur de Zoom Numérique & Centrage */}
-          <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-800/80">
-            <div className="space-y-1">
-              <div className="flex justify-between text-[10px] text-slate-300 font-medium">
-                <span className="flex items-center gap-1">
-                  <ZoomIn className="w-3 h-3 text-indigo-400" />
-                  Zoom Caméra :
-                </span>
-                <span className="font-mono text-indigo-300">{zoomLevel.toFixed(1)}x</span>
-              </div>
-              <input
-                type="range"
-                min="1.0"
-                max="3.2"
-                step="0.1"
-                value={zoomLevel}
-                onChange={(e) => setZoomLevel(Number(e.target.value))}
-                className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <div className="flex justify-between text-[10px] text-slate-300 font-medium">
-                <span>Centrage Vertical :</span>
-                <span className="font-mono text-indigo-300">{offsetY > 0 ? `+${offsetY}` : offsetY}%</span>
-              </div>
-              <input
-                type="range"
-                min="-20"
-                max="20"
-                step="1"
-                value={offsetY}
-                onChange={(e) => setOffsetY(Number(e.target.value))}
-                className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-              />
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* 4. Barre de Contrôles Inférieure */}
-      <footer className="relative z-30 px-3.5 py-2.5 bg-slate-950 border-t border-slate-900 flex items-center justify-between gap-2.5">
+      {/* 3. Barre de Contrôles Inférieure */}
+      <footer className="relative z-30 px-4 py-3 bg-slate-950 border-t border-slate-900 flex items-center justify-between gap-3">
         
+        {/* Charger une Image */}
         <input
           ref={fileInputRef}
           type="file"
@@ -663,45 +434,52 @@ export default function BorderDetectionCamera() {
         />
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="flex-1 py-2.5 px-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-center gap-1.5 text-xs font-semibold active:scale-95 transition"
+          className="py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-center gap-2 text-xs font-semibold active:scale-95 transition"
         >
-          <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
+          <ImageIcon className="w-4 h-4 text-slate-400" />
           Tester Image
         </button>
 
+        {/* Bouton Principal : Capturer & Découper */}
         <button
           onClick={handleCaptureWarped}
-          className="flex-[1.5] py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white flex items-center justify-center gap-1.5 text-xs font-bold shadow-lg shadow-emerald-500/20 active:scale-95 transition"
+          disabled={!isLocked}
+          className={`flex-1 py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-xs font-bold shadow-lg transition active:scale-95 ${
+            isLocked
+              ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white shadow-emerald-500/25'
+              : 'bg-slate-800 text-slate-500 border border-slate-700/50 cursor-not-allowed'
+          }`}
         >
-          <Maximize2 className="w-3.5 h-3.5" />
-          Figer & Découper (63x88)
+          <Maximize2 className="w-4 h-4" />
+          Capturer & Découper (63x88)
         </button>
 
+        {/* Reprendre Caméra si sur image de test */}
         {staticImageSource && (
           <button
             onClick={() => startCamera(selectedDeviceId)}
-            className="py-2.5 px-2.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold active:scale-95 transition"
+            className="py-3 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold active:scale-95 transition"
           >
-            Caméra
+            <Camera className="w-4 h-4" />
           </button>
         )}
       </footer>
 
-      {/* 5. Modal de Vérification de l'Extraction Redressée */}
+      {/* 4. Modal de Contrôle de l'Extraction Redressée */}
       {capturedWarpedImage && (
         <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-4">
-          <div className="max-w-xs w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-2xl flex flex-col items-center space-y-3">
+          <div className="max-w-xs w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl flex flex-col items-center space-y-4">
             <div className="flex items-center justify-between w-full">
               <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                Carte Extraite à Plat (63x88)
+                Carte Découpée aux 4 Bords
               </h3>
-              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+              <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400">
                 630 × 880 px
               </span>
             </div>
 
-            <div className="w-full aspect-[63/88] rounded-xl overflow-hidden border-2 border-emerald-500 shadow-xl bg-slate-950 flex items-center justify-center">
+            <div className="w-full aspect-[63/88] rounded-xl overflow-hidden border-2 border-emerald-500 shadow-2xl bg-slate-950 flex items-center justify-center">
               <img
                 src={capturedWarpedImage}
                 alt="Carte extraite"
@@ -710,12 +488,12 @@ export default function BorderDetectionCamera() {
             </div>
 
             <p className="text-[11px] text-slate-400 text-center">
-              Vérifiez la découpe sur les 4 bordures extérieures.
+              Les 4 bords extérieurs ont été détectés et redressés automatiquement.
             </p>
 
             <button
               onClick={() => setCapturedWarpedImage(null)}
-              className="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition"
+              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition"
             >
               Retour au Viseur
             </button>

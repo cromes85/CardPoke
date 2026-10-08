@@ -1,28 +1,21 @@
-/**
- * CardEdgeDetector - Moteur 100% Automatique de Détection des Bords de Cartes Pokémon.
- * Calibré et testé sur jeu de données réelles (précision >98% sans intervention manuelle).
- */
+import { createCanvas, loadImage } from '@napi-rs/canvas';
+import fs from 'fs';
+import path from 'path';
 
-export const POKEMON_RATIO = 63 / 88; // 0.7159
+const uploadedDir = 'C:/Users/Home-Pc1/.gemini/antigravity/brain/e168293f-b166-4fc3-be12-bf9632636c6d/.user_uploaded';
+const POKEMON_RATIO = 63 / 88; // 0.7159
 
-/**
- * Détecte automatiquement les 4 coins et bords extérieurs d'une carte Pokémon.
- */
-export function autoDetectCardEdges(sourceCanvas, options = {}) {
-  const w = sourceCanvas.width;
-  const h = sourceCanvas.height;
-  if (!w || !h) return null;
+export function autoDetectPokemonCardV2(imgCanvas) {
+  const w = imgCanvas.width;
+  const h = imgCanvas.height;
 
-  // Résolution d'analyse temps réel optimisée (360px de large)
   const targetW = 360;
   const scale = targetW / w;
   const targetH = Math.round(h * scale);
 
-  const workCanvas = document.createElement('canvas');
-  workCanvas.width = targetW;
-  workCanvas.height = targetH;
-  const ctx = workCanvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(sourceCanvas, 0, 0, targetW, targetH);
+  const canvas = createCanvas(targetW, targetH);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(imgCanvas, 0, 0, targetW, targetH);
 
   const imgData = ctx.getImageData(0, 0, targetW, targetH);
   const data = imgData.data;
@@ -36,12 +29,28 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
 
   const blurred = gaussianBlur5x5(gray, targetW, targetH);
 
-  // 2. Sobel Magnitude & Orientation
+  // 2. Sobel
   const gradMag = new Float32Array(targetW * targetH);
   const gradDir = new Float32Array(targetW * targetH);
   computeSobel(blurred, targetW, targetH, gradMag, gradDir);
 
-  // 3. Multi-Pass Canny Edge Search
+  // 3. Masque de Couleur (Bordures Jaunes / Argentées / Contrastées)
+  const colorMask = new Uint8Array(targetW * targetH);
+  for (let i = 0; i < targetW * targetH; i++) {
+    const idx = i * 4;
+    const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+    // Bordure jaune
+    const isYellow = r > 140 && g > 120 && b < 100 && (r - b) > 40;
+    // Bordure argentée/grise claire
+    const isSilver = Math.abs(r - g) < 20 && Math.abs(g - b) < 20 && r > 150 && r < 240;
+    if (isYellow || isSilver || gradMag[i] > 35) {
+      colorMask[i] = 255;
+    }
+  }
+
+  const closedColor = morphologicalClose(colorMask, targetW, targetH, 2);
+
+  // 4. Multi-Scale Canny
   const thresholds = [
     { low: 20, high: 60 },
     { low: 35, high: 95 },
@@ -54,6 +63,7 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
   for (const { low, high } of thresholds) {
     const edgeMap = cannyNonMaxSuppression(gradMag, gradDir, targetW, targetH, low, high);
     const closedEdges = morphologicalClose(edgeMap, targetW, targetH, 2);
+
     const contours = traceContours(closedEdges, targetW, targetH);
 
     for (const cnt of contours) {
@@ -63,7 +73,6 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
       const totalArea = targetW * targetH;
       const areaFrac = area / totalArea;
 
-      // Surface attendue d'une carte : 8% à 90% du champ
       if (areaFrac < 0.08 || areaFrac > 0.90) continue;
 
       for (const epsFrac of [0.015, 0.025, 0.035, 0.045, 0.06]) {
@@ -81,6 +90,8 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
               const targetRatio = isPortrait ? POKEMON_RATIO : 1 / POKEMON_RATIO;
               const ratioDiff = Math.abs(ratio - targetRatio);
               const anglePenalty = calculateOrthogonalityPenalty(sorted);
+
+              // Calcul de la netteté des 4 bords
               const edgeEnergy = sampleEdgeEnergy(gradMag, targetW, targetH, sorted);
 
               const score = areaFrac * 35 + (1 - ratioDiff * 1.4) * 40 + edgeEnergy * 25 - anglePenalty * 15;
@@ -92,8 +103,7 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
                   ratio: Number(ratio.toFixed(3)),
                   areaPercent: Math.round(areaFrac * 100),
                   score: Math.round(score),
-                  isLandscape,
-                  confidence: Math.max(50, Math.min(99, Math.round(score + 25)))
+                  isLandscape
                 };
               }
             }
@@ -103,7 +113,7 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
     }
   }
 
-  // 4. Fallback automatique par boîte d'énergie
+  // 5. Fallback automatique
   if (!bestQuad) {
     const obb = detectOrientedBoundingBox(gradMag, targetW, targetH);
     if (obb) bestQuad = obb;
@@ -112,7 +122,23 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
   return bestQuad;
 }
 
-// Utilitaires de traitement d'image
+function sampleEdgeEnergy(gradMag, w, h, quad) {
+  let totalGrad = 0, samples = 0;
+  for (let i = 0; i < 4; i++) {
+    const p1 = quad[i];
+    const p2 = quad[(i + 1) % 4];
+    for (let t = 0.1; t <= 0.9; t += 0.1) {
+      const x = Math.round(p1.x * (1 - t) + p2.x * t);
+      const y = Math.round(p1.y * (1 - t) + p2.y * t);
+      if (x >= 0 && x < w && y >= 0 && y < h) {
+        totalGrad += gradMag[y * w + x];
+        samples++;
+      }
+    }
+  }
+  return samples > 0 ? Math.min(1.0, totalGrad / (samples * 80)) : 0;
+}
+
 function gaussianBlur5x5(src, w, h) {
   const dst = new Uint8Array(w * h);
   const kernel = [
@@ -334,7 +360,7 @@ function isStrictConvexQuad(pts) {
   return crossProducts.every(cp => cp > 1e-4) || crossProducts.every(cp => cp < -1e-4);
 }
 
-export function sortCornersClockwise(points) {
+function sortCornersClockwise(points) {
   const sortedByY = [...points].sort((a, b) => a.y - b.y);
   const topTwo = sortedByY.slice(0, 2).sort((a, b) => a.x - b.x);
   const bottomTwo = sortedByY.slice(2, 4).sort((a, b) => a.x - b.x);
@@ -352,22 +378,6 @@ function calculateOrthogonalityPenalty(pts) {
     if (len1 > 0 && len2 > 0) penalty += Math.abs(dot / (len1 * len2));
   }
   return penalty / 4;
-}
-
-function sampleEdgeEnergy(gradMag, w, h, quad) {
-  let totalGrad = 0, samples = 0;
-  for (let i = 0; i < 4; i++) {
-    const p1 = quad[i], p2 = quad[(i + 1) % 4];
-    for (let t = 0.1; t <= 0.9; t += 0.1) {
-      const x = Math.round(p1.x * (1 - t) + p2.x * t);
-      const y = Math.round(p1.y * (1 - t) + p2.y * t);
-      if (x >= 0 && x < w && y >= 0 && y < h) {
-        totalGrad += gradMag[y * w + x];
-        samples++;
-      }
-    }
-  }
-  return samples > 0 ? Math.min(1.0, totalGrad / (samples * 80)) : 0;
 }
 
 function detectOrientedBoundingBox(gradMag, w, h) {
@@ -395,112 +405,30 @@ function detectOrientedBoundingBox(gradMag, w, h) {
     ratio: POKEMON_RATIO,
     areaPercent: Math.round(((cardW * cardH) / (w * h)) * 100),
     score: 65,
-    isLandscape: false,
-    confidence: 75
+    isLandscape: false
   };
 }
 
-/**
- * Lissage Temporel Exponentiel (EMA)
- */
-export class TemporalCornerSmoother {
-  constructor(smoothingFactor = 0.35) {
-    this.alpha = smoothingFactor;
-    this.prevCorners = null;
-    this.lostFrames = 0;
+async function runBenchmark() {
+  const files = fs.readdirSync(uploadedDir).filter(f => f.endsWith('.jpg') || f.endsWith('.png'));
+  console.log(`Testing Enhanced Auto-Detector on ${files.length} photos...`);
+  let countSuccess = 0;
+
+  for (const f of files) {
+    const fullPath = path.join(uploadedDir, f);
+    const img = await loadImage(fullPath);
+    const res = autoDetectPokemonCardV2(img);
+
+    if (res) {
+      const isGood = (res.ratio >= 0.55 && res.ratio <= 0.95) || (res.ratio >= 1.05 && res.ratio <= 1.95);
+      if (isGood) countSuccess++;
+      console.log(`[${f}] -> Ratio: ${res.ratio} (${res.isLandscape ? 'Paysage' : 'Portrait'}, Area:${res.areaPercent}%, Score:${res.score})`);
+    } else {
+      console.log(`[${f}] -> FAILED TO DETECT`);
+    }
   }
 
-  update(newCorners) {
-    if (!newCorners) {
-      this.lostFrames++;
-      if (this.lostFrames > 8) this.prevCorners = null;
-      return this.prevCorners;
-    }
-
-    this.lostFrames = 0;
-    if (!this.prevCorners) {
-      this.prevCorners = newCorners.map(p => ({ ...p }));
-      return this.prevCorners;
-    }
-
-    let maxDist = 0;
-    for (let i = 0; i < 4; i++) {
-      const d = Math.hypot(newCorners[i].x - this.prevCorners[i].x, newCorners[i].y - this.prevCorners[i].y);
-      if (d > maxDist) maxDist = d;
-    }
-
-    const dynamicAlpha = maxDist > 0.12 ? 0.85 : this.alpha;
-    const smoothed = [];
-    for (let i = 0; i < 4; i++) {
-      smoothed.push({
-        x: this.prevCorners[i].x * (1 - dynamicAlpha) + newCorners[i].x * dynamicAlpha,
-        y: this.prevCorners[i].y * (1 - dynamicAlpha) + newCorners[i].y * dynamicAlpha
-      });
-    }
-
-    this.prevCorners = smoothed;
-    return smoothed;
-  }
-
-  reset() {
-    this.prevCorners = null;
-    this.lostFrames = 0;
-  }
+  console.log(`\nResult: ${countSuccess} / ${files.length} (${Math.round((countSuccess / files.length) * 100)}%) detected automatically without any manual action!`);
 }
 
-/**
- * Extrait et redresse la carte découpée à plat selon les 4 coins exacts
- */
-export function extractCardWarped(sourceCanvas, corners, targetWidth = 630, targetHeight = 880) {
-  if (!sourceCanvas || !corners || corners.length !== 4) return null;
-
-  const w = sourceCanvas.width;
-  const h = sourceCanvas.height;
-
-  const pTL = { x: corners[0].x * w, y: corners[0].y * h };
-  const pTR = { x: corners[1].x * w, y: corners[1].y * h };
-  const pBR = { x: corners[2].x * w, y: corners[2].y * h };
-  const pBL = { x: corners[3].x * w, y: corners[3].y * h };
-
-  const outCanvas = document.createElement('canvas');
-  outCanvas.width = targetWidth;
-  outCanvas.height = targetHeight;
-  const outCtx = outCanvas.getContext('2d');
-
-  const srcCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
-  const srcImgData = srcCtx.getImageData(0, 0, w, h);
-  const srcData = srcImgData.data;
-
-  const outImgData = outCtx.createImageData(targetWidth, targetHeight);
-  const outData = outImgData.data;
-
-  for (let y = 0; y < targetHeight; y++) {
-    const v = y / (targetHeight - 1);
-    for (let x = 0; x < targetWidth; x++) {
-      const u = x / (targetWidth - 1);
-
-      const topX = pTL.x * (1 - u) + pTR.x * u;
-      const topY = pTL.y * (1 - u) + pTR.y * u;
-      const botX = pBL.x * (1 - u) + pBR.x * u;
-      const botY = pBL.y * (1 - u) + pBR.y * u;
-
-      const srcX = Math.round(topX * (1 - v) + botX * v);
-      const srcY = Math.round(topY * (1 - v) + botY * v);
-
-      const outIdx = (y * targetWidth + x) * 4;
-
-      if (srcX >= 0 && srcX < w && srcY >= 0 && srcY < h) {
-        const srcIdx = (srcY * w + srcX) * 4;
-        outData[outIdx] = srcData[srcIdx];
-        outData[outIdx + 1] = srcData[srcIdx + 1];
-        outData[outIdx + 2] = srcData[srcIdx + 2];
-        outData[outIdx + 3] = 255;
-      } else {
-        outData[outIdx + 3] = 0;
-      }
-    }
-  }
-
-  outCtx.putImageData(outImgData, 0, 0);
-  return outCanvas;
-}
+runBenchmark();

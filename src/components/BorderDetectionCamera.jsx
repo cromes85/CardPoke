@@ -17,7 +17,8 @@ import {
   Hash,
   Loader2,
   Copy,
-  Check
+  Check,
+  Zap
 } from 'lucide-react';
 import {
   autoDetectCardEdges,
@@ -25,7 +26,7 @@ import {
   extractCardWarped,
   POKEMON_RATIO
 } from '../utils/cardEdgeDetector';
-import { extractCardNumber } from '../utils/cardNumberExtractor';
+import { recognizeCardInfo } from '../utils/cardTextRecognizer';
 
 // Coordonnées d'usine étalonnées pour la Tour 3D
 const STAND_3D_CORNERS = [
@@ -58,9 +59,12 @@ export default function BorderDetectionCamera() {
   const [showLightingPanel, setShowLightingPanel] = useState(false);
   const [autoEnhance, setAutoEnhance] = useState(true);
 
-  // États OCR Numéro de Carte
+  // États OCR Automatique (Nom, PV, Numéro de Carte)
+  const [detectedName, setDetectedName] = useState('');
+  const [detectedHP, setDetectedHP] = useState('');
   const [detectedNumber, setDetectedNumber] = useState('');
-  const [isReadingNumber, setIsReadingNumber] = useState(false);
+  const [isReadingOCR, setIsReadingOCR] = useState(false);
+  const [headerCropPreview, setHeaderCropPreview] = useState(null);
   const [footerCropPreview, setFooterCropPreview] = useState(null);
   const [isCopied, setIsCopied] = useState(false);
 
@@ -311,34 +315,35 @@ export default function BorderDetectionCamera() {
     localStorage.setItem('card_lighting_contrast', c.toString());
   };
 
-  // Lecture OCR du numéro de carte
-  const readCardNumber = async (canvas) => {
+  // Lecture OCR Automatique Complète (Nom, PV, Numéro de Carte)
+  const readAllCardInfo = async (canvas) => {
     if (!canvas) return;
-    setIsReadingNumber(true);
+    setIsReadingOCR(true);
+    setDetectedName('');
+    setDetectedHP('');
     setDetectedNumber('');
     try {
-      const ocrRes = await extractCardNumber(canvas);
-      if (ocrRes.number) {
-        setDetectedNumber(ocrRes.number);
-      }
-      if (ocrRes.footerCropUrl) {
-        setFooterCropPreview(ocrRes.footerCropUrl);
-      }
+      const res = await recognizeCardInfo(canvas);
+      if (res.name) setDetectedName(res.name);
+      if (res.hp) setDetectedHP(res.hp);
+      if (res.number) setDetectedNumber(res.number);
+      if (res.headerPreview) setHeaderCropPreview(res.headerPreview);
+      if (res.footerPreview) setFooterCropPreview(res.footerPreview);
     } catch (err) {
-      console.warn('Erreur lecture numéro:', err);
+      console.warn('Erreur OCR Complète:', err);
     } finally {
-      setIsReadingNumber(false);
+      setIsReadingOCR(false);
     }
   };
 
-  const handleCopyNumber = () => {
-    if (!detectedNumber) return;
-    navigator.clipboard?.writeText(detectedNumber);
+  const handleCopyCardInfo = () => {
+    const summary = `${detectedName || 'Pokémon'} ${detectedHP ? `(${detectedHP})` : ''} - N° ${detectedNumber || 'Non renseigné'}`.trim();
+    navigator.clipboard?.writeText(summary);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  // 6. Figer & Extraire la carte redressée (750 x 1050 px HD) avec OCR Numéro
+  // 6. Figer & Extraire la carte redressée (750 x 1050 px HD) avec OCR Automatique
   const handleCaptureWarped = async (forceEnhance = autoEnhance) => {
     if (!corners || corners.length !== 4) return;
 
@@ -391,8 +396,8 @@ export default function BorderDetectionCamera() {
     if (warped) {
       lastWarpedCanvasRef.current = warped;
       setCapturedWarpedImage(warped.toDataURL('image/jpeg', 0.95));
-      // Lancement immédiat de la capture et lecture du numéro de carte
-      readCardNumber(warped);
+      // Lancement immédiat de la reconnaissance OCR (Nom, PV, Numéro)
+      readAllCardInfo(warped);
     }
   };
 
@@ -746,37 +751,81 @@ export default function BorderDetectionCamera() {
               />
             </div>
 
-            {/* Boîtier Numéro de Carte (OCR Automatique) */}
+            {/* 1. Boîtier Nom & PV (En-Tête) */}
             <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border border-slate-800 flex flex-col gap-2 shadow-inner">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Hash className="w-3.5 h-3.5 text-amber-400" />
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  Nom & Points de Vie (PV)
+                </span>
+                {isReadingOCR ? (
+                  <span className="text-[10px] text-amber-400 flex items-center gap-1 font-mono animate-pulse">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Lecture...
+                  </span>
+                ) : detectedName ? (
+                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
+                    <CheckCircle2 className="w-3 h-3" /> Identifié
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {headerCropPreview && (
+                  <div className="w-20 h-7 rounded border border-slate-700 overflow-hidden bg-black flex-shrink-0 flex items-center justify-center shadow">
+                    <img
+                      src={headerCropPreview}
+                      alt="Zoom Titre"
+                      className="w-full h-full object-cover"
+                      title="En-tête de la carte"
+                    />
+                  </div>
+                )}
+
+                <div className="flex-1 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={detectedName}
+                    onChange={(e) => setDetectedName(e.target.value)}
+                    placeholder={isReadingOCR ? "Recherche nom..." : "Nom Pokémon (ex: Fantominus)"}
+                    className="flex-1 bg-slate-900 border border-slate-700 focus:border-amber-500 rounded-lg px-2 py-1 text-xs font-bold text-white focus:outline-none placeholder-slate-600 transition"
+                  />
+                  <input
+                    type="text"
+                    value={detectedHP}
+                    onChange={(e) => setDetectedHP(e.target.value)}
+                    placeholder="PV"
+                    className="w-16 bg-slate-900 border border-slate-700 focus:border-amber-500 rounded-lg px-1.5 py-1 text-xs font-mono font-bold text-amber-300 focus:outline-none placeholder-slate-600 text-center transition"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Boîtier Numéro de Carte (Bas de Carte) */}
+            <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border border-slate-800 flex flex-col gap-2 shadow-inner">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Hash className="w-3.5 h-3.5 text-emerald-400" />
                   Numéro de Carte
                 </span>
-                {isReadingNumber ? (
-                  <span className="text-[10px] text-amber-400 flex items-center gap-1 font-mono animate-pulse">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Lecture OCR...
-                  </span>
-                ) : detectedNumber ? (
+                {detectedNumber ? (
                   <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
-                    <CheckCircle2 className="w-3 h-3" /> Détecté
+                    <CheckCircle2 className="w-3 h-3" /> N° trouvé
                   </span>
-                ) : (
+                ) : !isReadingOCR ? (
                   <span className="text-[10px] text-slate-500 font-mono">
                     Non détecté
                   </span>
-                )}
+                ) : null}
               </div>
 
-              {/* Aperçu Zoomé du Bas + Champ d'Édition / Validation */}
               <div className="flex items-center gap-2">
                 {footerCropPreview && (
-                  <div className="w-24 h-9 rounded-lg border border-slate-700 overflow-hidden bg-black flex-shrink-0 flex items-center justify-center shadow">
+                  <div className="w-20 h-7 rounded border border-slate-700 overflow-hidden bg-black flex-shrink-0 flex items-center justify-center shadow">
                     <img
                       src={footerCropPreview}
                       alt="Zoom N°"
                       className="w-full h-full object-cover"
-                      title="Zone détectée sur la carte"
+                      title="Zone numéro bas de carte"
                     />
                   </div>
                 )}
@@ -786,27 +835,25 @@ export default function BorderDetectionCamera() {
                     type="text"
                     value={detectedNumber}
                     onChange={(e) => setDetectedNumber(e.target.value)}
-                    placeholder={isReadingNumber ? "Lecture..." : "ex: 123/217"}
-                    className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-emerald-400 focus:outline-none placeholder-slate-600 transition"
+                    placeholder={isReadingOCR ? "Lecture..." : "ex: 123/217"}
+                    className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2 py-1 text-xs font-mono font-bold text-emerald-400 focus:outline-none placeholder-slate-600 transition"
                   />
 
-                  {detectedNumber && (
-                    <button
-                      onClick={handleCopyNumber}
-                      title="Copier le numéro"
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95"
-                    >
-                      {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  )}
+                  <button
+                    onClick={handleCopyCardInfo}
+                    title="Copier les informations"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95"
+                  >
+                    {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
 
                   <button
-                    onClick={() => readCardNumber(lastWarpedCanvasRef.current)}
-                    disabled={isReadingNumber}
-                    title="Relancer la détection OCR"
+                    onClick={() => readAllCardInfo(lastWarpedCanvasRef.current)}
+                    disabled={isReadingOCR}
+                    title="Relancer l'analyse OCR"
                     className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95 disabled:opacity-50"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isReadingNumber ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 ${isReadingOCR ? 'animate-spin text-amber-400' : ''}`} />
                   </button>
                 </div>
               </div>
@@ -832,7 +879,7 @@ export default function BorderDetectionCamera() {
 
               <a
                 href={capturedWarpedImage}
-                download={`pokemon_scan_${Date.now()}.jpg`}
+                download={`pokemon_${detectedName || 'scan'}_${Date.now()}.jpg`}
                 className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-[11px] font-semibold flex items-center justify-center gap-1.5 transition active:scale-95"
                 title="Télécharger l'image"
               >

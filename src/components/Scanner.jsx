@@ -75,16 +75,16 @@ export default function Scanner({
 
   // Optical & Digital Zoom Engine for 3D Tower & Distance Calibration (2D Viewport Pan & Zoom)
   const [zoom, setZoom] = useState(() => {
-    const saved = localStorage.getItem('pokescan_zoom_3d_v368');
+    const saved = localStorage.getItem('pokescan_zoom_3d_v369');
     return saved ? parseFloat(saved) : 2.8;
   });
   const [offsetX, setOffsetX] = useState(() => {
-    const saved = localStorage.getItem('pokescan_offset_x_3d_v368');
-    return saved ? parseFloat(saved) : 0.10;
+    const saved = localStorage.getItem('pokescan_offset_x_3d_v369');
+    return saved ? parseFloat(saved) : 0.09;
   });
   const [offsetY, setOffsetY] = useState(() => {
-    const saved = localStorage.getItem('pokescan_offset_y_3d_v368');
-    return saved ? parseFloat(saved) : -0.14;
+    const saved = localStorage.getItem('pokescan_offset_y_3d_v369');
+    return saved ? parseFloat(saved) : -0.12;
   });
   const [showZoomPanel, setShowZoomPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -94,7 +94,7 @@ export default function Scanner({
 
   // Clean up legacy keys once
   useEffect(() => {
-    ['pokescan_zoom_3d_v362', 'pokescan_offset_x_3d_v362', 'pokescan_offset_y_3d_v362', 'pokescan_zoom_3d_v366', 'pokescan_offset_x_3d_v366', 'pokescan_offset_y_3d_v366', 'pokescan_zoom_3d', 'pokescan_offset_x_3d', 'pokescan_offset_y_3d'].forEach(k => {
+    ['pokescan_zoom_3d_v362', 'pokescan_offset_x_3d_v362', 'pokescan_offset_y_3d_v362', 'pokescan_zoom_3d_v366', 'pokescan_offset_x_3d_v366', 'pokescan_offset_y_3d_v366', 'pokescan_zoom_3d_v368', 'pokescan_offset_x_3d_v368', 'pokescan_offset_y_3d_v368', 'pokescan_zoom_3d', 'pokescan_offset_x_3d', 'pokescan_offset_y_3d'].forEach(k => {
       try { localStorage.removeItem(k); } catch (e) {}
     });
   }, []);
@@ -259,9 +259,9 @@ export default function Scanner({
     if (newOffY !== null) setOffsetY(targetOffY);
 
     if (scanMode === 'batch3d') {
-      localStorage.setItem('pokescan_zoom_3d_v368', String(targetZoom));
-      if (newOffX !== null) localStorage.setItem('pokescan_offset_x_3d_v368', String(targetOffX));
-      if (newOffY !== null) localStorage.setItem('pokescan_offset_y_3d_v368', String(targetOffY));
+      localStorage.setItem('pokescan_zoom_3d_v369', String(targetZoom));
+      if (newOffX !== null) localStorage.setItem('pokescan_offset_x_3d_v369', String(targetOffX));
+      if (newOffY !== null) localStorage.setItem('pokescan_offset_y_3d_v369', String(targetOffY));
     } else {
       localStorage.setItem('pokescan_zoom_normal', String(targetZoom));
       if (newOffX !== null) localStorage.setItem('pokescan_offset_x_normal', String(targetOffX));
@@ -327,9 +327,9 @@ export default function Scanner({
   const handleModeChange = (mode) => {
     setScanMode(mode);
     if (mode === 'batch3d') {
-      const saved3D = parseFloat(localStorage.getItem('pokescan_zoom_3d_v368')) || 2.8;
-      const savedOffX = parseFloat(localStorage.getItem('pokescan_offset_x_3d_v368')) || 0.10;
-      const savedOffY = parseFloat(localStorage.getItem('pokescan_offset_y_3d_v368')) || -0.14;
+      const saved3D = parseFloat(localStorage.getItem('pokescan_zoom_3d_v369')) || 2.8;
+      const savedOffX = parseFloat(localStorage.getItem('pokescan_offset_x_3d_v369')) || 0.09;
+      const savedOffY = parseFloat(localStorage.getItem('pokescan_offset_y_3d_v369')) || -0.12;
       handleSetCalibration(saved3D, savedOffX, savedOffY);
     } else {
       const savedNorm = parseFloat(localStorage.getItem('pokescan_zoom_normal')) || 1.0;
@@ -1111,10 +1111,10 @@ export default function Scanner({
           <div className="absolute bottom-3 right-3 sm:right-4 z-30 flex items-center gap-1 bg-slate-950/90 backdrop-blur-md p-1 sm:p-1.5 rounded-2xl border border-slate-700/80 shadow-2xl">
             {[
               { label: '1x', val: 1.0, ox: 0.0, oy: 0.0 },
-              { label: '1.5x', val: 1.5, ox: 0.05, oy: -0.07 },
-              { label: '2x', val: 2.0, ox: 0.07, oy: -0.10 },
-              { label: '2.8x 🎯 3D', val: 2.8, ox: 0.10, oy: -0.14 },
-              { label: '3.5x', val: 3.5, ox: 0.12, oy: -0.18 }
+              { label: '1.5x', val: 1.5, ox: 0.05, oy: -0.06 },
+              { label: '2x', val: 2.0, ox: 0.07, oy: -0.09 },
+              { label: '2.8x 🎯 3D', val: 2.8, ox: 0.09, oy: -0.12 },
+              { label: '3.5x', val: 3.5, ox: 0.11, oy: -0.15 }
             ].map(preset => (
               <button
                 key={preset.val}
@@ -1179,7 +1179,7 @@ export default function Scanner({
                     ◀
                   </button>
                   <button
-                    onClick={() => handleSetCalibration(2.8, 0.10, -0.14)}
+                    onClick={() => handleSetCalibration(2.8, 0.09, -0.12)}
                     title="Centrer par défaut pour support 3D"
                     className="w-8 h-7 rounded-lg bg-red-600/30 text-red-300 font-bold flex items-center justify-center text-[10px] active:scale-95 border border-red-500/40"
                   >
@@ -1280,7 +1280,7 @@ export default function Scanner({
                   onClick={() => {
                     localStorage.removeItem('pokescan_custom_corners');
                     setCustomCorners(DEFAULT_3D_STAND_CORNERS);
-                    handleSetCalibration(2.8, 0.10, -0.14);
+                    handleSetCalibration(2.8, 0.09, -0.12);
                   }}
                   className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[10.5px] font-semibold text-center transition-colors"
                 >
@@ -1295,7 +1295,7 @@ export default function Scanner({
                 onClick={() => {
                   localStorage.removeItem('pokescan_custom_corners');
                   setCustomCorners(DEFAULT_3D_STAND_CORNERS);
-                  handleSetCalibration(2.8, 0.10, -0.14);
+                  handleSetCalibration(2.8, 0.09, -0.12);
                 }}
                 className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold text-center transition-colors"
               >

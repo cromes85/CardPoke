@@ -24,10 +24,10 @@ import {
 
 // Coordonnées physiques exactes de la carte au millimètre dans le support 3D
 const DEFAULT_3D_CORNERS = [
-  { x: 0.278, y: 0.474 }, // TL : Haut-Gauche
+  { x: 0.276, y: 0.474 }, // TL : Haut-Gauche
   { x: 0.536, y: 0.474 }, // TR : Haut-Droit
-  { x: 0.536, y: 0.654 }, // BR : Bas-Droit
-  { x: 0.278, y: 0.654 }  // BL : Bas-Gauche
+  { x: 0.536, y: 0.614 }, // BR : Bas-Droit
+  { x: 0.276, y: 0.614 }  // BL : Bas-Gauche
 ];
 
 export default function BorderDetectionCamera() {
@@ -55,7 +55,7 @@ export default function BorderDetectionCamera() {
   // Coins de Détection (avec mémorisation localStorage)
   const [corners, setCorners] = useState(() => {
     try {
-      const saved = localStorage.getItem('cardpoke_stand_corners_v2');
+      const saved = localStorage.getItem('cardpoke_stand_corners_v3');
       if (saved) return JSON.parse(saved);
     } catch (e) {}
     return DEFAULT_3D_CORNERS;
@@ -167,7 +167,7 @@ export default function BorderDetectionCamera() {
         y: Math.max(0, Math.min(1, Number((p.y + dy).toFixed(4))))
       }));
       try {
-        localStorage.setItem('cardpoke_stand_corners_v2', JSON.stringify(next));
+        localStorage.setItem('cardpoke_stand_corners_v3', JSON.stringify(next));
       } catch (e) {}
       return next;
     });
@@ -176,7 +176,7 @@ export default function BorderDetectionCamera() {
   const resetToFactoryCorners = () => {
     setCorners(DEFAULT_3D_CORNERS);
     try {
-      localStorage.setItem('cardpoke_stand_corners_v2', JSON.stringify(DEFAULT_3D_CORNERS));
+      localStorage.setItem('cardpoke_stand_corners_v3', JSON.stringify(DEFAULT_3D_CORNERS));
     } catch (e) {}
   };
 
@@ -192,7 +192,7 @@ export default function BorderDetectionCamera() {
       const next = [...prev];
       next[activeDragCorner] = { x: Number(x.toFixed(4)), y: Number(y.toFixed(4)) };
       try {
-        localStorage.setItem('cardpoke_stand_corners_v2', JSON.stringify(next));
+        localStorage.setItem('cardpoke_stand_corners_v3', JSON.stringify(next));
       } catch (err) {}
       return next;
     });

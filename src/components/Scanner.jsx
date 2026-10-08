@@ -51,6 +51,19 @@ export default function Scanner({
   const [torchOn, setTorchOn] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
 
+  // Optical & Digital Zoom Engine for 3D Tower & Distance Calibration
+  const [zoom, setZoom] = useState(() => {
+    const saved = localStorage.getItem('pokescan_zoom_3d');
+    return saved ? parseFloat(saved) : 2.3;
+  });
+  const [offsetY, setOffsetY] = useState(() => {
+    const saved = localStorage.getItem('pokescan_offset_3d');
+    return saved ? parseFloat(saved) : 0.06;
+  });
+  const [showZoomPanel, setShowZoomPanel] = useState(false);
+  const [hwZoomSupported, setHwZoomSupported] = useState(false);
+  const [hwZoomRange, setHwZoomRange] = useState({ min: 1, max: 5, step: 0.1 });
+
   // Real-Time Dynamic Header (Nom + PV/PC) Detection in Standby
   const [liveHeaderScan, setLiveHeaderScan] = useState({
     name: '',
@@ -88,7 +101,65 @@ export default function Scanner({
   const lastCaptureTimeRef = useRef(0);
   const batchQueueRef = useRef([]);
 
-  // Start Camera Stream with Continuous Auto-Exposure Constraints
+  // Compute Zoomed ROI in Video Coordinate System
+  const getZoomedCropDimensions = useCallback((vw, vh, z, offY) => {
+    const zoomVal = Math.max(1.0, z || 1.0);
+    const cropW = Math.floor(vw / zoomVal);
+    const cropH = Math.floor(vh / zoomVal);
+    const centerX = Math.max(0, Math.min(vw - cropW, Math.floor((vw - cropW) / 2)));
+    const rawCenterY = Math.floor((vh - cropH) / 2 + (vh * (offY || 0)));
+    const cropY = Math.max(0, Math.min(vh - cropH, rawCenterY));
+    return { cropX: centerX, cropY: centerY, cropW, cropH };
+  }, []);
+
+  // Set Zoom Level and persist per mode
+  const handleSetZoom = useCallback(async (newZoom, newOffsetY = null) => {
+    const targetZoom = Math.max(1.0, Math.min(4.0, Number(newZoom)));
+    const targetOffsetY = newOffsetY !== null ? Number(newOffsetY) : offsetY;
+    
+    setZoom(targetZoom);
+    if (newOffsetY !== null) {
+      setOffsetY(targetOffsetY);
+    }
+
+    if (scanMode === 'batch3d') {
+      localStorage.setItem('pokescan_zoom_3d', String(targetZoom));
+      if (newOffsetY !== null) localStorage.setItem('pokescan_offset_3d', String(targetOffsetY));
+    } else {
+      localStorage.setItem('pokescan_zoom_normal', String(targetZoom));
+      if (newOffsetY !== null) localStorage.setItem('pokescan_offset_normal', String(targetOffsetY));
+    }
+
+    // Try applying native hardware zoom if available
+    if (videoRef.current && videoRef.current.srcObject) {
+      const track = videoRef.current.srcObject.getVideoTracks()[0];
+      if (track) {
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        if (caps.zoom) {
+          try {
+            const clamped = Math.max(caps.zoom.min || 1, Math.min(caps.zoom.max || 5, targetZoom));
+            await track.applyConstraints({ advanced: [{ zoom: clamped }] });
+          } catch (e) {}
+        }
+      }
+    }
+  }, [offsetY, scanMode]);
+
+  // Handle Mode Change and Restore Corresponding Zoom Preset
+  const handleModeChange = (mode) => {
+    setScanMode(mode);
+    if (mode === 'batch3d') {
+      const saved3D = parseFloat(localStorage.getItem('pokescan_zoom_3d')) || 2.3;
+      const savedOffset3D = parseFloat(localStorage.getItem('pokescan_offset_3d')) || 0.06;
+      handleSetZoom(saved3D, savedOffset3D);
+    } else {
+      const savedNorm = parseFloat(localStorage.getItem('pokescan_zoom_normal')) || 1.0;
+      const savedOffsetNorm = parseFloat(localStorage.getItem('pokescan_offset_normal')) || 0.0;
+      handleSetZoom(savedNorm, savedOffsetNorm);
+    }
+  };
+
+  // Start Camera Stream with Continuous Auto-Exposure & Zoom Capabilities
   const startCamera = useCallback(async () => {
     setCameraError(null);
     try {
@@ -126,6 +197,16 @@ export default function Scanner({
         if (capabilities.exposureMode?.includes('continuous')) adv.exposureMode = 'continuous';
         if (capabilities.whiteBalanceMode?.includes('continuous')) adv.whiteBalanceMode = 'continuous';
         if (capabilities.focusMode?.includes('continuous')) adv.focusMode = 'continuous';
+        if (capabilities.zoom) {
+          setHwZoomSupported(true);
+          setHwZoomRange({
+            min: capabilities.zoom.min || 1,
+            max: capabilities.zoom.max || 5,
+            step: capabilities.zoom.step || 0.1
+          });
+          const initialZoom = scanMode === 'batch3d' ? (parseFloat(localStorage.getItem('pokescan_zoom_3d')) || 2.3) : 1.0;
+          adv.zoom = Math.max(capabilities.zoom.min || 1, Math.min(capabilities.zoom.max || 5, initialZoom));
+        }
         if (Object.keys(adv).length > 0) {
           await track.applyConstraints({ advanced: [adv] });
         }
@@ -138,7 +219,7 @@ export default function Scanner({
       setHasCamera(false);
       setCameraError(err.message || "Impossible d'accéder à la caméra. Vérifiez les autorisations.");
     }
-  }, [facingMode]);
+  }, [facingMode, scanMode]);
 
   // Toggle Torch
   const toggleTorch = async () => {
@@ -201,7 +282,7 @@ export default function Scanner({
     return () => clearInterval(interval);
   }, [hasCamera, cameraError]);
 
-  // Standby Real-Time Name & PV / HP Detection Loop (Cadre Bleu Dynamique)
+  // Standby Real-Time Name & PV / HP Detection Loop (Cadre Bleu Dynamique sur Zone Zoomée)
   useEffect(() => {
     if (!hasCamera || cameraError || isProcessing) return;
 
@@ -213,27 +294,24 @@ export default function Scanner({
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
 
-      // The card is centered in video viewport with aspect ratio 63/88:
-      const cardH = vh * 0.70;
-      const cardW = cardH * (63 / 88);
-      const cardTopY = Math.max(0, (vh - cardH) / 2);
-      const cardLeftX = Math.max(0, (vw - cardW) / 2);
+      // Calculate Zoomed ROI (matching the framed card directly)
+      const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetY);
 
-      // Extract strictly the TOP BANNER of the card (where Name and HP/PV are printed)
-      const cropW = Math.min(vw - 10, Math.floor(cardW * 0.96));
-      const cropH = Math.min(vh - 10, Math.floor(cardH * 0.20));
-      const cropX = Math.min(vw - cropW, Math.floor(cardLeftX + cardW * 0.02));
-      const cropY = Math.min(vh - cropH, Math.floor(cardTopY + cardH * 0.02));
+      // In the zoomed card frame, extract the top 22% (where Name and HP/PV are printed)
+      const headerW = Math.min(vw - cropX - 5, Math.floor(cropW * 0.94));
+      const headerH = Math.min(vh - cropY - 5, Math.floor(cropH * 0.22));
+      const headerX = Math.min(vw - headerW, Math.floor(cropX + cropW * 0.03));
+      const headerY = Math.min(vh - headerH, Math.floor(cropY + cropH * 0.02));
 
       try {
         isLiveScanningRef.current = true;
         setLiveHeaderScan(prev => ({ ...prev, isSearching: true }));
 
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = cropW;
-        tempCanvas.height = cropH;
+        tempCanvas.width = headerW;
+        tempCanvas.height = headerH;
         const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        ctx.drawImage(video, headerX, headerY, headerW, headerH, 0, 0, headerW, headerH);
 
         const enhanced = autoEnhanceLighting(tempCanvas, 0.9);
         const res = await ocrService.scanHeaderLive(enhanced);
@@ -254,22 +332,26 @@ export default function Scanner({
       } finally {
         isLiveScanningRef.current = false;
       }
-    }, 1500);
+    }, 1400);
 
     return () => clearInterval(interval);
-  }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus]);
+  }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus, zoom, offsetY, getZoomedCropDimensions]);
 
-  // Single Frame Capture (for Button & Auto Modes) with Auto-Lighting Equalizer
+  // Single Frame Capture (for Button & Auto Modes) with Zoomed ROI & Auto-Lighting Equalizer
   const captureFrame = useCallback(() => {
     if (!videoRef.current || isProcessing) return null;
     soundManager.playSnap();
 
     const video = videoRef.current;
+    const vw = video.videoWidth || 1280;
+    const vh = video.videoHeight || 720;
+    const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetY);
+
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    canvas.width = cropW;
+    canvas.height = cropH;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
     // Apply Dynamic Tone Mapping & Shadow Equalizer
     const enhancedCanvas = autoEnhanceLighting(canvas, 0.85);
@@ -279,7 +361,7 @@ export default function Scanner({
       sourceCanvas: enhancedCanvas,
       detectedCorners: corners
     });
-  }, [isProcessing, onCardCaptured]);
+  }, [isProcessing, onCardCaptured, zoom, offsetY, getZoomedCropDimensions]);
 
   // Handle Standard Auto-Scan Mode Countdown
   useEffect(() => {
@@ -330,6 +412,9 @@ export default function Scanner({
       // 4. Query TCGdex
       const searchRes = await searchCard({
         primaryName: ocrRes.primaryName,
+        hp: ocrRes.hp,
+        detectedCategory: ocrRes.detectedCategory,
+        stage: ocrRes.detectedCategory?.stage,
         candidateWords: ocrRes.candidateWords,
         extractedNumbers: ocrRes.extractedNumbers,
         localId: ocrRes.localId,
@@ -389,13 +474,17 @@ export default function Scanner({
       }
 
       const video = videoRef.current;
-      // Sample central 60% drop zone
-      const cropX = video.videoWidth * 0.2;
-      const cropY = video.videoHeight * 0.2;
-      const cropW = video.videoWidth * 0.6;
-      const cropH = video.videoHeight * 0.6;
+      const vw = video.videoWidth || 1280;
+      const vh = video.videoHeight || 720;
+      const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetY);
 
-      sampleCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, sampleW, sampleH);
+      // Sample central 50% of the zoomed card drop zone
+      const sampleCropX = cropX + Math.floor(cropW * 0.25);
+      const sampleCropY = cropY + Math.floor(cropH * 0.25);
+      const sampleCropW = Math.floor(cropW * 0.50);
+      const sampleCropH = Math.floor(cropH * 0.50);
+
+      sampleCtx.drawImage(video, sampleCropX, sampleCropY, sampleCropW, sampleCropH, 0, 0, sampleW, sampleH);
       const imgData = sampleCtx.getImageData(0, 0, sampleW, sampleH);
       const d = imgData.data;
 
@@ -432,12 +521,12 @@ export default function Scanner({
             lastCaptureTimeRef.current = now;
             soundManager.playDropBeep();
 
-            // Capture high-res frame
+            // Capture high-res zoomed frame
             const snapCanvas = document.createElement('canvas');
-            snapCanvas.width = video.videoWidth || 1280;
-            snapCanvas.height = video.videoHeight || 720;
+            snapCanvas.width = cropW;
+            snapCanvas.height = cropH;
             const snapCtx = snapCanvas.getContext('2d');
-            snapCtx.drawImage(video, 0, 0);
+            snapCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
             // Add to background queue
             batchQueueRef.current.push({ canvas: snapCanvas, time: now });
@@ -458,7 +547,7 @@ export default function Scanner({
 
     animId = requestAnimationFrame(checkMotionLoop);
     return () => cancelAnimationFrame(animId);
-  }, [scanMode, batchStatus, hasCamera, isProcessingQueue, processBatchQueue]);
+  }, [scanMode, batchStatus, hasCamera, isProcessingQueue, processBatchQueue, zoom, offsetY, getZoomedCropDimensions]);
 
   // Start Batch Session
   const handleStartBatch = () => {
@@ -521,7 +610,7 @@ export default function Scanner({
       <div className="w-full flex items-center justify-between mb-3 bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800 shadow-xl gap-1 overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-1 shrink-0">
           <button
-            onClick={() => setScanMode('batch3d')}
+            onClick={() => handleModeChange('batch3d')}
             className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition-all whitespace-nowrap ${
               scanMode === 'batch3d'
                 ? 'bg-gradient-to-r from-emerald-600 to-teal-500 text-white shadow-md shadow-emerald-600/30'
@@ -531,12 +620,12 @@ export default function Scanner({
             <Layers className="w-3.5 h-3.5" />
             <span>Support 3D</span>
             <span className="text-[8px] sm:text-[9px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-400/40">
-              NEW
+              Auto-Zoom
             </span>
           </button>
 
           <button
-            onClick={() => setScanMode('button')}
+            onClick={() => handleModeChange('button')}
             className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold transition-all whitespace-nowrap ${
               scanMode === 'button'
                 ? 'bg-red-600 text-white shadow-md shadow-red-600/30'
@@ -548,7 +637,7 @@ export default function Scanner({
           </button>
 
           <button
-            onClick={() => setScanMode('auto')}
+            onClick={() => handleModeChange('auto')}
             className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold transition-all whitespace-nowrap ${
               scanMode === 'auto'
                 ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30 font-black'
@@ -579,15 +668,22 @@ export default function Scanner({
       {/* Main Viewfinder Box */}
       <div className="relative w-full aspect-[3/4] sm:aspect-[4/3] md:aspect-[16/10] max-h-[58vh] rounded-3xl overflow-hidden bg-slate-950 border-2 border-slate-800 shadow-2xl flex items-center justify-center group">
         
-        {/* Camera Stream */}
+        {/* Camera Stream with Digital & Optical Zoom Viewport Transform */}
         {hasCamera && !cameraError ? (
-          <video
-            ref={videoRef}
-            playsInline
-            muted
-            autoPlay
-            className="w-full h-full object-cover"
-          />
+          <div className="w-full h-full overflow-hidden relative flex items-center justify-center">
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              autoPlay
+              style={{
+                transform: `scale(${zoom}) translateY(${offsetY * 100}%)`,
+                transformOrigin: 'center center',
+                transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
+              }}
+              className="w-full h-full object-cover will-change-transform"
+            />
+          </div>
         ) : (
           <div className="flex flex-col items-center justify-center p-6 text-center text-slate-400 max-w-md">
             <AlertCircle className="w-12 h-12 text-rose-500 mb-3" />
@@ -624,6 +720,113 @@ export default function Scanner({
                 + Torche
               </button>
             )}
+          </div>
+        )}
+
+        {/* Floating Quick Zoom Toolbar on Viewfinder */}
+        {hasCamera && !cameraError && (
+          <div className="absolute bottom-3 right-3 sm:right-4 z-30 flex items-center gap-1 bg-slate-950/90 backdrop-blur-md p-1 sm:p-1.5 rounded-2xl border border-slate-700/80 shadow-2xl">
+            {[
+              { label: '1x', val: 1.0, off: 0.0 },
+              { label: '1.5x', val: 1.5, off: 0.03 },
+              { label: '2x', val: 2.0, off: 0.05 },
+              { label: '2.3x 🎯 3D', val: 2.3, off: 0.06 },
+              { label: '3x', val: 3.0, off: 0.07 }
+            ].map(preset => (
+              <button
+                key={preset.val}
+                onClick={() => handleSetZoom(preset.val, preset.off)}
+                className={`px-2 py-1 rounded-xl text-[10px] sm:text-xs font-black transition-all ${
+                  Math.abs(zoom - preset.val) < 0.12
+                    ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-md shadow-red-600/40 scale-105'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+
+            <button
+              onClick={() => setShowZoomPanel(!showZoomPanel)}
+              title="Ajuster le zoom et le centrage vertical au millimètre"
+              className={`p-1.5 rounded-xl border transition-colors ${
+                showZoomPanel
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow'
+                  : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+              }`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Granular Zoom & Vertical Centering Fine-Tuning Drawer */}
+        {showZoomPanel && (
+          <div className="absolute top-14 inset-x-3 sm:inset-x-8 z-40 p-3.5 rounded-2xl bg-slate-900/95 backdrop-blur-md border border-slate-700 shadow-2xl space-y-3 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-white flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                <span>Calibrage Zoom & Centrage (Tour 3D / Support)</span>
+              </span>
+              <button
+                onClick={() => setShowZoomPanel(false)}
+                className="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800"
+              >
+                Fermer
+              </button>
+            </div>
+
+            {/* Zoom Slider */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-400 font-semibold">Grossissement (Zoom) :</span>
+                <span className="text-amber-400 font-mono font-black">{zoom.toFixed(1)}x</span>
+              </div>
+              <input
+                type="range"
+                min="1.0"
+                max="3.5"
+                step="0.1"
+                value={zoom}
+                onChange={(e) => handleSetZoom(parseFloat(e.target.value))}
+                className="w-full accent-red-500 cursor-pointer"
+              />
+            </div>
+
+            {/* Vertical Centering Offset Slider */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-400 font-semibold">Centrage Vertical (Hauteur) :</span>
+                <span className="text-cyan-400 font-mono font-bold">
+                  {offsetY > 0 ? `+${Math.round(offsetY * 100)}%` : `${Math.round(offsetY * 100)}%`}
+                </span>
+              </div>
+              <input
+                type="range"
+                min="-0.15"
+                max="0.18"
+                step="0.01"
+                value={offsetY}
+                onChange={(e) => handleSetZoom(zoom, parseFloat(e.target.value))}
+                className="w-full accent-cyan-500 cursor-pointer"
+              />
+            </div>
+
+            {/* 1-Click Calibration Shortcuts */}
+            <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
+              <button
+                onClick={() => handleSetZoom(2.3, 0.06)}
+                className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold text-center transition-colors"
+              >
+                🎯 Calibrer Tour 3D (2.3x)
+              </button>
+              <button
+                onClick={() => handleSetZoom(1.0, 0.0)}
+                className="flex-1 py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-semibold text-center transition-colors"
+              >
+                📱 Vue Normale (1.0x)
+              </button>
+            </div>
           </div>
         )}
 

@@ -8,8 +8,12 @@ import {
   AlertCircle,
   Maximize2,
   Camera,
-  Layers,
-  Sparkles
+  ZoomIn,
+  ChevronUp,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Sliders
 } from 'lucide-react';
 import {
   autoDetectCardEdges,
@@ -18,12 +22,12 @@ import {
   POKEMON_RATIO
 } from '../utils/cardEdgeDetector';
 
-// Coordonnées d'usine étalonnées pour la Tour 3D
-const STAND_3D_CORNERS = [
-  { x: 0.268, y: 0.480 }, // TL
-  { x: 0.538, y: 0.480 }, // TR
-  { x: 0.538, y: 0.690 }, // BR
-  { x: 0.268, y: 0.690 }  // BL
+// Coordonnées physiques exactes de la carte au fond de la tour 3D
+const DEFAULT_3D_CORNERS = [
+  { x: 0.270, y: 0.460 }, // TL : Haut-Gauche
+  { x: 0.544, y: 0.460 }, // TR : Haut-Droit
+  { x: 0.544, y: 0.828 }, // BR : Bas-Droit
+  { x: 0.270, y: 0.828 }  // BL : Bas-Gauche
 ];
 
 export default function BorderDetectionCamera() {
@@ -32,8 +36,9 @@ export default function BorderDetectionCamera() {
   const animFrameRef = useRef(null);
   const trackerRef = useRef(new RobustCardTracker());
   const fileInputRef = useRef(null);
+  const svgRef = useRef(null);
 
-  // Mode de Détection : 'stand' (Tour/Support 3D) | 'auto' (Table / Libre)
+  // Mode de Détection : 'stand' (Tour 3D Calibrée) | 'auto' (Table / Libre)
   const [scanMode, setScanMode] = useState('stand');
 
   // États Caméra & Matériel
@@ -44,8 +49,12 @@ export default function BorderDetectionCamera() {
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
 
-  // Résultat de Détection
-  const [corners, setCorners] = useState(STAND_3D_CORNERS);
+  // Zoom Numérique optionnel
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [showNudgePanel, setShowNudgePanel] = useState(false);
+
+  // Coins de Détection (Support 3D ou Auto)
+  const [corners, setCorners] = useState(DEFAULT_3D_CORNERS);
   const [isLocked, setIsLocked] = useState(true);
   const [fps, setFps] = useState(0);
 
@@ -141,7 +150,15 @@ export default function BorderDetectionCamera() {
     startCamera(nextDev.deviceId);
   };
 
-  // 4. Boucle de Traitement Vidéo
+  // 4. Micro-ajustement D-Pad (Nudge)
+  const nudgeCorners = (dx, dy) => {
+    setCorners(prev => prev.map(p => ({
+      x: Math.max(0, Math.min(1, p.x + dx)),
+      y: Math.max(0, Math.min(1, p.y + dy))
+    })));
+  };
+
+  // 5. Boucle de Traitement Vidéo
   useEffect(() => {
     let isRunning = true;
     const workCanvas = document.createElement('canvas');
@@ -159,11 +176,8 @@ export default function BorderDetectionCamera() {
       }
 
       if (scanMode === 'stand') {
-        // En mode Support 3D : cadrage automatique instantané au millimètre sur la goulotte
-        setCorners(STAND_3D_CORNERS);
         setIsLocked(true);
       } else if (timestamp - lastProcessTimeRef.current >= 35) {
-        // En mode Table / Libre : analyse par vision par ordinateur adaptative
         lastProcessTimeRef.current = timestamp;
 
         const video = videoRef.current;
@@ -211,7 +225,7 @@ export default function BorderDetectionCamera() {
     };
   }, [scanMode, cameraActive, staticImageSource]);
 
-  // 5. Charger une image de test
+  // 6. Charger une image de test
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -232,7 +246,7 @@ export default function BorderDetectionCamera() {
     reader.readAsDataURL(file);
   };
 
-  // 6. Figer & Extraire la carte redressée (630 x 880 px)
+  // 7. Figer & Extraire la carte redressée (630 x 880 px)
   const handleCaptureWarped = () => {
     if (!corners || corners.length !== 4) return;
 
@@ -284,10 +298,14 @@ export default function BorderDetectionCamera() {
           </div>
         </div>
 
-        {/* Sélecteur de mode 1-clic : Tour 3D vs Table */}
+        {/* Sélecteur de mode : Tour 3D vs Table */}
         <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] font-medium">
           <button
-            onClick={() => setScanMode('stand')}
+            onClick={() => {
+              setScanMode('stand');
+              setCorners(DEFAULT_3D_CORNERS);
+              setIsLocked(true);
+            }}
             className={`px-3 py-1 rounded-lg transition ${
               scanMode === 'stand'
                 ? 'bg-emerald-600 text-white font-bold shadow'
@@ -297,7 +315,10 @@ export default function BorderDetectionCamera() {
             🏗️ Tour 3D
           </button>
           <button
-            onClick={() => setScanMode('auto')}
+            onClick={() => {
+              setScanMode('auto');
+              trackerRef.current.reset();
+            }}
             className={`px-3 py-1 rounded-lg transition ${
               scanMode === 'auto'
                 ? 'bg-indigo-600 text-white font-bold shadow'
@@ -308,7 +329,7 @@ export default function BorderDetectionCamera() {
           </button>
         </div>
 
-        {/* Boutons Flash & Switch Caméra */}
+        {/* Boutons d'actions rapides */}
         <div className="flex items-center gap-1.5">
           {hasTorch && (
             <button
@@ -331,30 +352,54 @@ export default function BorderDetectionCamera() {
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
           )}
+
+          {scanMode === 'stand' && (
+            <button
+              onClick={() => setShowNudgePanel(prev => !prev)}
+              className={`p-2 rounded-xl border transition ${
+                showNudgePanel
+                  ? 'bg-indigo-600 text-white border-indigo-500'
+                  : 'bg-slate-800 text-slate-300 border-slate-700'
+              }`}
+              title="Ajustement fin"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </header>
 
       {/* 2. Viseur Vidéo & Calque de Détection SVG */}
       <div className="relative flex-1 w-full bg-black flex items-center justify-center overflow-hidden">
         
-        {/* Flux Caméra */}
+        {/* Flux Caméra avec Zoom optionnel */}
         {cameraActive && (
-          <video
-            ref={videoRef}
-            playsInline
-            muted
-            autoPlay
-            className="w-full h-full object-cover sm:object-contain"
-          />
+          <div
+            className="w-full h-full flex items-center justify-center origin-center transition-transform duration-75"
+            style={{ transform: `scale(${zoomLevel})` }}
+          >
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              autoPlay
+              className="w-full h-full object-cover sm:object-contain"
+            />
+          </div>
         )}
 
         {/* Image Statique de Test */}
         {staticImageSource && (
-          <img
-            src={staticImageSource.src}
-            alt="Carte de test"
-            className="w-full h-full object-contain"
-          />
+          <div
+            className="w-full h-full flex items-center justify-center origin-center"
+            style={{ transform: `scale(${zoomLevel})` }}
+          >
+            <img
+              src={staticImageSource.src}
+              alt="Carte de test"
+              className="w-full h-full object-contain"
+            />
+          </div>
         )}
 
         {/* Message d'erreur */}
@@ -373,16 +418,17 @@ export default function BorderDetectionCamera() {
 
         {/* Calque de Traçage SVG Dynamique */}
         <svg
+          ref={svgRef}
           className="absolute inset-0 w-full h-full pointer-events-none z-10"
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
         >
           {corners && (
             <>
-              {/* Polygone de bordure lumineuse */}
+              {/* Polygone de bordure lumineuse couvrant l'intégralité de la carte */}
               <polygon
                 points={getSvgPolygonPoints()}
-                className="fill-emerald-500/20 stroke-emerald-400 stroke-[1.4] drop-shadow-[0_0_12px_rgba(52,211,153,0.9)] transition-all duration-100 ease-out"
+                className="fill-emerald-500/20 stroke-emerald-400 stroke-[1.4] drop-shadow-[0_0_12px_rgba(52,211,153,0.9)] transition-all duration-75 ease-out"
               />
 
               {/* Réticules aux 4 coins (TL, TR, BR, BL) */}
@@ -390,7 +436,7 @@ export default function BorderDetectionCamera() {
                 const labels = ['TL', 'TR', 'BR', 'BL'];
                 const colors = ['#38bdf8', '#818cf8', '#34d399', '#f472b6'];
                 return (
-                  <g key={idx} className="transition-all duration-100 ease-out">
+                  <g key={idx} className="transition-all duration-75 ease-out">
                     <circle
                       cx={pt.x * 100}
                       cy={pt.y * 100}
@@ -420,14 +466,60 @@ export default function BorderDetectionCamera() {
 
         {/* Badge Viseur Flottant */}
         {isLocked && corners && (
-          <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-center pointer-events-none">
+          <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between pointer-events-none">
             <div className="bg-slate-900/90 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/40 text-xs font-mono text-emerald-300 flex items-center gap-2 shadow-xl">
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              <span>4 Bords Cadrés (63:88)</span>
+              <span>4 Bords Cadrés (Intégral 63x88mm)</span>
             </div>
+
+            {scanMode === 'stand' && (
+              <button
+                onClick={() => setCorners(DEFAULT_3D_CORNERS)}
+                className="pointer-events-auto bg-slate-900/90 hover:bg-slate-800 border border-slate-800 px-2.5 py-1 rounded-full text-[10px] text-slate-300"
+              >
+                Réinitialiser
+              </button>
+            )}
           </div>
         )}
       </div>
+
+      {/* Panneau de Micro-Ajustement Rapide D-Pad (si ouvert) */}
+      {showNudgePanel && scanMode === 'stand' && (
+        <div className="relative z-30 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-4 py-2 flex items-center justify-between text-xs">
+          <span className="text-slate-300 font-medium">Ajustement fin :</span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => nudgeCorners(-0.005, 0)}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+              title="Décaler Gauche"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => nudgeCorners(0, -0.005)}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+              title="Décaler Haut"
+            >
+              <ChevronUp className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => nudgeCorners(0, 0.005)}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+              title="Décaler Bas"
+            >
+              <ChevronDown className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => nudgeCorners(0.005, 0)}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+              title="Décaler Droite"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 3. Barre de Contrôles Inférieure */}
       <footer className="relative z-30 px-4 py-3 bg-slate-950 border-t border-slate-900 flex items-center justify-between gap-3">

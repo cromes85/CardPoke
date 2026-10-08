@@ -7,7 +7,9 @@ import {
   CheckCircle2,
   AlertCircle,
   Maximize2,
-  Camera
+  Camera,
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import {
   autoDetectCardEdges,
@@ -16,6 +18,14 @@ import {
   POKEMON_RATIO
 } from '../utils/cardEdgeDetector';
 
+// Coordonnées d'usine étalonnées pour la Tour 3D
+const STAND_3D_CORNERS = [
+  { x: 0.268, y: 0.480 }, // TL
+  { x: 0.538, y: 0.480 }, // TR
+  { x: 0.538, y: 0.690 }, // BR
+  { x: 0.268, y: 0.690 }  // BL
+];
+
 export default function BorderDetectionCamera() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -23,7 +33,10 @@ export default function BorderDetectionCamera() {
   const trackerRef = useRef(new RobustCardTracker());
   const fileInputRef = useRef(null);
 
-  // États Caméra & Détection
+  // Mode de Détection : 'stand' (Tour/Support 3D) | 'auto' (Table / Libre)
+  const [scanMode, setScanMode] = useState('stand');
+
+  // États Caméra & Matériel
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState(null);
   const [torchOn, setTorchOn] = useState(false);
@@ -31,11 +44,9 @@ export default function BorderDetectionCamera() {
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
 
-  // Résultat de Détection 100% Automatique et Stabilisé
-  const [corners, setCorners] = useState(null);
-  const [isLocked, setIsLocked] = useState(false);
-  const [confidence, setConfidence] = useState(0);
-  const [aspectRatio, setAspectRatio] = useState(0.716);
+  // Résultat de Détection
+  const [corners, setCorners] = useState(STAND_3D_CORNERS);
+  const [isLocked, setIsLocked] = useState(true);
   const [fps, setFps] = useState(0);
 
   // Extraction & Vérification
@@ -130,7 +141,7 @@ export default function BorderDetectionCamera() {
     startCamera(nextDev.deviceId);
   };
 
-  // 4. Boucle de Traitement Vidéo & Suivi Stabilisé (Anti-Jitter)
+  // 4. Boucle de Traitement Vidéo
   useEffect(() => {
     let isRunning = true;
     const workCanvas = document.createElement('canvas');
@@ -147,7 +158,12 @@ export default function BorderDetectionCamera() {
         lastFpsTimeRef.current = now;
       }
 
-      if (timestamp - lastProcessTimeRef.current >= 35) {
+      if (scanMode === 'stand') {
+        // En mode Support 3D : cadrage automatique instantané au millimètre sur la goulotte
+        setCorners(STAND_3D_CORNERS);
+        setIsLocked(true);
+      } else if (timestamp - lastProcessTimeRef.current >= 35) {
+        // En mode Table / Libre : analyse par vision par ordinateur adaptative
         lastProcessTimeRef.current = timestamp;
 
         const video = videoRef.current;
@@ -169,17 +185,12 @@ export default function BorderDetectionCamera() {
           workCanvas.height = sh;
           workCtx.drawImage(source, 0, 0, sw, sh);
 
-          // Détection brute
           const rawResult = autoDetectCardEdges(workCanvas);
-
-          // Filtrage et stabilisation temporelle anti-tremblement
           const tracked = trackerRef.current.update(rawResult);
 
           if (tracked && tracked.corners) {
             setCorners(tracked.corners);
             setIsLocked(tracked.isLocked);
-            setConfidence(tracked.confidence);
-            setAspectRatio(tracked.ratio);
           } else {
             setCorners(null);
             setIsLocked(false);
@@ -198,7 +209,7 @@ export default function BorderDetectionCamera() {
         cancelAnimationFrame(animFrameRef.current);
       }
     };
-  }, [cameraActive, staticImageSource]);
+  }, [scanMode, cameraActive, staticImageSource]);
 
   // 5. Charger une image de test
   const handleFileUpload = (e) => {
@@ -257,54 +268,67 @@ export default function BorderDetectionCamera() {
   };
 
   return (
-    <div className="relative w-full h-[100dvh] bg-slate-950 flex flex-col justify-between overflow-hidden select-none">
+    <div className="relative w-full h-[100dvh] bg-slate-950 flex flex-col justify-between overflow-hidden select-none font-sans">
       
-      {/* 1. Header Transparent Épuré */}
-      <header className="relative z-30 flex items-center justify-between px-4 py-3 bg-slate-900/80 backdrop-blur-md border-b border-slate-800/80">
-        <div className="flex items-center gap-2.5">
+      {/* 1. Header Transparent Épuré avec Sélecteur de Mode */}
+      <header className="relative z-30 flex items-center justify-between px-3.5 py-2.5 bg-slate-900/90 backdrop-blur-md border-b border-slate-800/80">
+        <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-sm">
             <Scan className="w-4 h-4 animate-pulse" />
           </div>
           <div>
-            <h1 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
-              Détecteur Pokémon
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-medium transition-colors ${
-                isLocked
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-              }`}>
-                {isLocked ? '🎯 Carte Stabilisée' : '🔍 Recherche...'}
-              </span>
-            </h1>
-            <p className="text-[11px] text-slate-400 font-mono">
-              {fps} FPS • Anti-Jitter Actif
+            <h1 className="text-xs font-bold text-white tracking-wide">Détecteur Pokémon</h1>
+            <p className="text-[10px] text-slate-400 font-mono">
+              {fps} FPS • {scanMode === 'stand' ? '🎯 Tour 3D' : '📱 Table'}
             </p>
           </div>
         </div>
 
-        {/* Boutons d'actions rapides */}
-        <div className="flex items-center gap-2">
+        {/* Sélecteur de mode 1-clic : Tour 3D vs Table */}
+        <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] font-medium">
+          <button
+            onClick={() => setScanMode('stand')}
+            className={`px-3 py-1 rounded-lg transition ${
+              scanMode === 'stand'
+                ? 'bg-emerald-600 text-white font-bold shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            🏗️ Tour 3D
+          </button>
+          <button
+            onClick={() => setScanMode('auto')}
+            className={`px-3 py-1 rounded-lg transition ${
+              scanMode === 'auto'
+                ? 'bg-indigo-600 text-white font-bold shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            📱 Table
+          </button>
+        </div>
+
+        {/* Boutons Flash & Switch Caméra */}
+        <div className="flex items-center gap-1.5">
           {hasTorch && (
             <button
               onClick={toggleTorch}
-              className={`p-2.5 rounded-xl border transition ${
+              className={`p-2 rounded-xl border transition ${
                 torchOn
-                  ? 'bg-amber-500 text-black border-amber-400 shadow-lg shadow-amber-500/30'
-                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                  ? 'bg-amber-500 text-black border-amber-400 shadow-md'
+                  : 'bg-slate-800 text-slate-300 border-slate-700'
               }`}
-              title="Allumer le Flash"
             >
-              <Flashlight className="w-4 h-4" />
+              <Flashlight className="w-3.5 h-3.5" />
             </button>
           )}
 
           {videoDevices.length > 1 && (
             <button
               onClick={handleSwitchCamera}
-              className="p-2.5 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 active:scale-95 transition"
-              title="Changer d'objectif caméra"
+              className="p-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition"
             >
-              <RefreshCw className="w-4 h-4" />
+              <RefreshCw className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
@@ -342,12 +366,12 @@ export default function BorderDetectionCamera() {
               onClick={() => startCamera()}
               className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold"
             >
-              Réessayer l'accès caméra
+              Réessayer
             </button>
           </div>
         )}
 
-        {/* Calque de Traçage SVG Dynamique & Lissé */}
+        {/* Calque de Traçage SVG Dynamique */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none z-10"
           viewBox="0 0 100 100"
@@ -355,13 +379,13 @@ export default function BorderDetectionCamera() {
         >
           {corners && (
             <>
-              {/* Polygone de bordure lumineuse stabilisé */}
+              {/* Polygone de bordure lumineuse */}
               <polygon
                 points={getSvgPolygonPoints()}
-                className="fill-emerald-500/15 stroke-emerald-400 stroke-[1.2] drop-shadow-[0_0_10px_rgba(52,211,153,0.9)] transition-all duration-100 ease-out"
+                className="fill-emerald-500/20 stroke-emerald-400 stroke-[1.4] drop-shadow-[0_0_12px_rgba(52,211,153,0.9)] transition-all duration-100 ease-out"
               />
 
-              {/* Réticules lumineux aux 4 coins (TL, TR, BR, BL) */}
+              {/* Réticules aux 4 coins (TL, TR, BR, BL) */}
               {corners.map((pt, idx) => {
                 const labels = ['TL', 'TR', 'BR', 'BL'];
                 const colors = ['#38bdf8', '#818cf8', '#34d399', '#f472b6'];
@@ -394,27 +418,12 @@ export default function BorderDetectionCamera() {
           )}
         </svg>
 
-        {/* Badge Viseur Flottant : Mesures exactes */}
+        {/* Badge Viseur Flottant */}
         {isLocked && corners && (
           <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-center pointer-events-none">
             <div className="bg-slate-900/90 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/40 text-xs font-mono text-emerald-300 flex items-center gap-2 shadow-xl">
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              <span>4 Bords Verrouillés ({aspectRatio.toFixed(2)})</span>
-            </div>
-          </div>
-        )}
-
-        {/* Guidage si aucune carte */}
-        {!isLocked && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-            <div className="w-[65vw] max-w-[280px] aspect-[63/88] rounded-2xl border-2 border-dashed border-slate-600/40 flex flex-col items-center justify-center p-4 text-center">
-              <Scan className="w-8 h-8 text-slate-500/60 mb-2 animate-bounce" />
-              <p className="text-xs text-slate-400 font-medium">
-                Visez une carte Pokémon
-              </p>
-              <p className="text-[10px] text-slate-500 mt-1">
-                Le cadre se verrouille et se stabilise automatiquement
-              </p>
+              <span>4 Bords Cadrés (63:88)</span>
             </div>
           </div>
         )}
@@ -453,7 +462,6 @@ export default function BorderDetectionCamera() {
           Capturer & Découper (63x88)
         </button>
 
-        {/* Reprendre Caméra */}
         {staticImageSource && (
           <button
             onClick={() => startCamera(selectedDeviceId)}

@@ -1,259 +1,36 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import Header from './components/Header';
-import Scanner from './components/Scanner';
-import CardCropModal from './components/CardCropModal';
-import CardResultModal from './components/CardResultModal';
-import BatchRecapModal from './components/BatchRecapModal';
-import ManualSearch from './components/ManualSearch';
-import Collection from './components/Collection';
-import DeployGuideModal from './components/DeployGuideModal';
-import Footer from './components/Footer';
-
-import { ocrService } from './utils/ocrService';
-import { searchCard, getCardDetails } from './utils/tcgApi';
-import { soundManager } from './utils/audio';
-import { getSavedCollection, saveCardToCollection, removeCardFromCollection } from './utils/storage';
+import React from 'react';
 
 export default function App() {
-  // Navigation & UI States
-  const [activeTab, setActiveTab] = useState('scanner');
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [showDeployGuide, setShowDeployGuide] = useState(false);
-  const [prefilledQuery, setPrefilledQuery] = useState('');
-
-  // Collection State
-  const [collection, setCollection] = useState([]);
-
-  // Scan & Processing States
-  const [capturedData, setCapturedData] = useState(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState(0);
-  const [statusMessage, setStatusMessage] = useState('');
-
-  // Result Modal State
-  const [selectedCard, setSelectedCard] = useState(null);
-  const [alternativeMatches, setAlternativeMatches] = useState([]);
-  const [ocrMeta, setOcrMeta] = useState({});
-  const [userCroppedDataUrl, setUserCroppedDataUrl] = useState(null);
-
-  // 3D Tower Batch Session Recap State
-  const [batchSessionCards, setBatchSessionCards] = useState(null);
-
-  // Load collection on mount
-  useEffect(() => {
-    const saved = getSavedCollection();
-    setCollection(saved);
-  }, []);
-
-  const totalValueEur = useMemo(() => {
-    return collection.reduce((sum, item) => sum + (Number(item.priceEur) || 0), 0);
-  }, [collection]);
-
-  const handleCardCaptured = (captureResult) => {
-    setCapturedData(captureResult);
-  };
-
-  // Confirm Crop & run OCR + TCG search
-  const handleConfirmCropAndScan = async (warpedCanvas, sourceCanvas) => {
-    setCapturedData(null);
-    setIsProcessing(true);
-    setOcrProgress(0.1);
-    setStatusMessage("Reconnaissance optique des caractères (OCR)...");
-
-    const croppedDataUrl = warpedCanvas.toDataURL('image/jpeg', 0.85);
-    setUserCroppedDataUrl(croppedDataUrl);
-
-    try {
-      // 1. Run OCR
-      const ocrResult = await ocrService.scanCard(warpedCanvas, (prog) => {
-        setOcrProgress(prog);
-      });
-
-      setStatusMessage("Recherche des cotes en direct sur TCGdex...");
-
-      // 2. Query TCGdex
-      const searchResult = await searchCard({
-        primaryName: ocrResult.primaryName,
-        hp: ocrResult.hp,
-        detectedCategory: ocrResult.detectedCategory,
-        stage: ocrResult.detectedCategory?.stage,
-        candidateWords: ocrResult.candidateWords,
-        extractedNumbers: ocrResult.extractedNumbers,
-        localId: ocrResult.localId,
-        totalInSet: ocrResult.totalInSet,
-        setCode: ocrResult.setCode
-      });
-
-      setIsProcessing(false);
-
-      if (searchResult && searchResult.bestMatch) {
-        soundManager.playSuccess();
-        setSelectedCard(searchResult.bestMatch);
-        setAlternativeMatches(searchResult.alternatives || []);
-        setOcrMeta(searchResult.meta || {});
-      } else {
-        // Fallback gracefully without alert popup
-        const queryCandidate = ocrResult.primaryName || ocrResult.localId || '';
-        setPrefilledQuery(queryCandidate);
-        setActiveTab('search');
-      }
-    } catch (err) {
-      console.error("Scan analysis error:", err);
-      setIsProcessing(false);
-      setActiveTab('search');
-    }
-  };
-
-  const handleSelectAlternative = async (cardId) => {
-    setIsProcessing(true);
-    try {
-      const details = await getCardDetails(cardId);
-      setIsProcessing(false);
-      if (details) {
-        setAlternativeMatches(prev => {
-          const filtered = prev.filter(c => c.id !== cardId);
-          if (selectedCard && !filtered.some(c => c.id === selectedCard.id)) {
-            return [selectedCard, ...filtered];
-          }
-          return filtered;
-        });
-        setSelectedCard(details);
-        soundManager.playSuccess();
-      }
-    } catch (e) {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleUpdateSearch = async (params) => {
-    setIsProcessing(true);
-    const searchResult = await searchCard(params);
-    setIsProcessing(false);
-    if (searchResult && searchResult.bestMatch) {
-      setSelectedCard(searchResult.bestMatch);
-      setAlternativeMatches(searchResult.alternatives || []);
-      setOcrMeta(searchResult.meta || {});
-    }
-  };
-
-  const handleSaveToCollection = (cardData, userPhoto, condition, notes) => {
-    const newItem = saveCardToCollection(cardData, userPhoto, condition, notes);
-    if (newItem) {
-      setCollection(prev => [newItem, ...prev]);
-    }
-  };
-
-  const handleSaveAllBatchToCollection = (items) => {
-    for (const item of items) {
-      saveCardToCollection(item.card, item.userPhoto, 'Near Mint (NM)', 'Scan Support 3D');
-    }
-    setCollection(getSavedCollection());
-  };
-
-  const handleRemoveFromCollection = (itemId) => {
-    const updated = removeCardFromCollection(itemId);
-    setCollection(updated);
-  };
-
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-red-500 selection:text-white">
-      
-      {/* Header */}
-      <Header
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        collectionCount={collection.length}
-        totalValueEur={totalValueEur}
-        soundEnabled={soundEnabled}
-        setSoundEnabled={setSoundEnabled}
-        onOpenDeployGuide={() => setShowDeployGuide(true)}
-      />
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 select-none font-sans">
+      <div className="max-w-md w-full text-center space-y-6 bg-slate-900/60 p-8 rounded-2xl border border-slate-800 shadow-2xl backdrop-blur-sm">
+        <div className="w-16 h-16 mx-auto rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-3xl">
+          ✨
+        </div>
+        
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-white mb-2">
+            CardPoke
+          </h1>
+          <p className="text-sm text-slate-400">
+            Projet réinitialisé à zéro (Clean Slate / From Scratch).
+          </p>
+        </div>
 
-      {/* Main Viewport */}
-      <main className="flex-1 flex flex-col justify-start py-4 sm:py-6">
-        {activeTab === 'scanner' && (
-          <Scanner
-            onCardCaptured={handleCardCaptured}
-            onFinishBatchSession={(cards) => setBatchSessionCards(cards)}
-            isProcessing={isProcessing}
-            ocrProgress={ocrProgress}
-            statusMessage={statusMessage}
-          />
-        )}
+        <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400 text-left space-y-2">
+          <div className="flex items-center gap-2 text-slate-300 font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            Statut : Prêt pour le nouveau départ
+          </div>
+          <p>
+            Toutes les versions précédentes sont sauvegardées et archivées sur la branche Git <code className="text-indigo-400 font-mono">archive/v3-scanner</code>.
+          </p>
+        </div>
 
-        {activeTab === 'collection' && (
-          <Collection
-            collection={collection}
-            onRemoveCard={handleRemoveFromCollection}
-            onSelectCard={(item) => {
-              getCardDetails(item.cardId || item.id).then(details => {
-                if (details) setSelectedCard(details);
-                else setSelectedCard(item);
-              });
-            }}
-            onReloadCollection={() => setCollection(getSavedCollection())}
-          />
-        )}
-
-        {activeTab === 'search' && (
-          <ManualSearch
-            initialQuery={prefilledQuery}
-            onSelectCard={(card) => {
-              setSelectedCard(card);
-              setAlternativeMatches([]);
-            }}
-          />
-        )}
-      </main>
-
-      {/* Modals */}
-      {capturedData && (
-        <CardCropModal
-          sourceCanvas={capturedData.sourceCanvas}
-          detectedCorners={capturedData.detectedCorners}
-          onConfirm={handleConfirmCropAndScan}
-          onCancel={() => setCapturedData(null)}
-        />
-      )}
-
-      {selectedCard && (
-        <CardResultModal
-          card={selectedCard}
-          alternatives={alternativeMatches}
-          ocrMeta={ocrMeta}
-          userCroppedImage={userCroppedDataUrl}
-          onSaveToCollection={handleSaveToCollection}
-          onSelectAlternative={handleSelectAlternative}
-          onUpdateSearch={handleUpdateSearch}
-          onManualSearchFallback={() => {
-            setSelectedCard(null);
-            setActiveTab('search');
-          }}
-          onClose={() => setSelectedCard(null)}
-        />
-      )}
-
-      {/* 3D Tower Batch Session Recap Modal */}
-      {batchSessionCards && (
-        <BatchRecapModal
-          sessionCards={batchSessionCards}
-          onSaveAllToCollection={handleSaveAllBatchToCollection}
-          onRestartScan={() => {
-            setBatchSessionCards(null);
-            setActiveTab('scanner');
-          }}
-          onClose={() => setBatchSessionCards(null)}
-        />
-      )}
-
-      {showDeployGuide && (
-        <DeployGuideModal
-          onClose={() => setShowDeployGuide(false)}
-        />
-      )}
-
-      <Footer onOpenDeployGuide={() => setShowDeployGuide(true)} />
-
+        <div className="text-xs text-slate-500">
+          En attente de vos nouvelles directives.
+        </div>
+      </div>
     </div>
   );
 }

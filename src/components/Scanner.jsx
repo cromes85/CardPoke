@@ -64,16 +64,16 @@ export default function Scanner({
 
   // Optical & Digital Zoom Engine for 3D Tower & Distance Calibration (2D Viewport Pan & Zoom)
   const [zoom, setZoom] = useState(() => {
-    const saved = localStorage.getItem('pokescan_zoom_3d');
-    return saved ? parseFloat(saved) : 2.2;
+    const saved = localStorage.getItem('pokescan_zoom_3d_v362');
+    return saved ? parseFloat(saved) : 2.6;
   });
   const [offsetX, setOffsetX] = useState(() => {
-    const saved = localStorage.getItem('pokescan_offset_x_3d');
+    const saved = localStorage.getItem('pokescan_offset_x_3d_v362');
     return saved ? parseFloat(saved) : 0.12;
   });
   const [offsetY, setOffsetY] = useState(() => {
-    const saved = localStorage.getItem('pokescan_offset_y_3d');
-    return saved ? parseFloat(saved) : -0.06;
+    const saved = localStorage.getItem('pokescan_offset_y_3d_v362');
+    return saved ? parseFloat(saved) : -0.05;
   });
   const [showZoomPanel, setShowZoomPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -214,9 +214,9 @@ export default function Scanner({
   const handleModeChange = (mode) => {
     setScanMode(mode);
     if (mode === 'batch3d') {
-      const saved3D = parseFloat(localStorage.getItem('pokescan_zoom_3d')) || 2.2;
-      const savedOffX = parseFloat(localStorage.getItem('pokescan_offset_x_3d')) || 0.12;
-      const savedOffY = parseFloat(localStorage.getItem('pokescan_offset_y_3d')) || -0.06;
+      const saved3D = parseFloat(localStorage.getItem('pokescan_zoom_3d_v362')) || 2.6;
+      const savedOffX = parseFloat(localStorage.getItem('pokescan_offset_x_3d_v362')) || 0.12;
+      const savedOffY = parseFloat(localStorage.getItem('pokescan_offset_y_3d_v362')) || -0.05;
       handleSetCalibration(saved3D, savedOffX, savedOffY);
     } else {
       const savedNorm = parseFloat(localStorage.getItem('pokescan_zoom_normal')) || 1.0;
@@ -940,9 +940,9 @@ export default function Scanner({
             {[
               { label: '1x', val: 1.0, ox: 0.0, oy: 0.0 },
               { label: '1.5x', val: 1.5, ox: 0.06, oy: -0.03 },
-              { label: '2x', val: 2.0, ox: 0.10, oy: -0.05 },
-              { label: '2.2x 🎯 3D', val: 2.2, ox: 0.12, oy: -0.06 },
-              { label: '2.8x', val: 2.8, ox: 0.14, oy: -0.07 }
+              { label: '2x', val: 2.0, ox: 0.10, oy: -0.04 },
+              { label: '2.6x 🎯 3D', val: 2.6, ox: 0.12, oy: -0.05 },
+              { label: '3x', val: 3.0, ox: 0.14, oy: -0.06 }
             ].map(preset => (
               <button
                 key={preset.val}
@@ -1007,7 +1007,7 @@ export default function Scanner({
                     ◀
                   </button>
                   <button
-                    onClick={() => handleSetCalibration(zoom, 0.12, -0.06)}
+                    onClick={() => handleSetCalibration(2.6, 0.12, -0.05)}
                     title="Centrer par défaut pour support 3D"
                     className="w-8 h-7 rounded-lg bg-red-600/30 text-red-300 font-bold flex items-center justify-center text-[10px] active:scale-95 border border-red-500/40"
                   >
@@ -1056,10 +1056,10 @@ export default function Scanner({
             {/* 1-Click Calibration Shortcuts */}
             <div className="flex items-center gap-2 pt-1">
               <button
-                onClick={() => handleSetCalibration(2.2, 0.12, -0.06)}
+                onClick={() => handleSetCalibration(2.6, 0.12, -0.05)}
                 className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold text-center transition-colors"
               >
-                🎯 Tour 3D Préréglée (2.2x)
+                🎯 Tour 3D Préréglée (2.6x)
               </button>
               <button
                 onClick={() => handleSetCalibration(1.0, 0.0, 0.0)}

@@ -527,8 +527,9 @@ function detectOrientedBoundingBox(gradMag, w, h) {
 
 /**
  * Extrait et redresse la carte découpée à plat selon les 4 coins exacts
+ * Supporte le rehaussement de luminosité et contraste pour les supports 3D sombres
  */
-export function extractCardWarped(sourceCanvas, corners, targetWidth = 630, targetHeight = 880) {
+export function extractCardWarped(sourceCanvas, corners, targetWidth = 630, targetHeight = 880, brightness = 1.0, contrast = 1.0) {
   if (!sourceCanvas || !corners || corners.length !== 4) return null;
 
   const w = sourceCanvas.width;
@@ -551,6 +552,8 @@ export function extractCardWarped(sourceCanvas, corners, targetWidth = 630, targ
   const outImgData = outCtx.createImageData(targetWidth, targetHeight);
   const outData = outImgData.data;
 
+  const applyColorCorrection = brightness !== 1.0 || contrast !== 1.0;
+
   for (let y = 0; y < targetHeight; y++) {
     const v = y / (targetHeight - 1);
     for (let x = 0; x < targetWidth; x++) {
@@ -568,9 +571,29 @@ export function extractCardWarped(sourceCanvas, corners, targetWidth = 630, targ
 
       if (srcX >= 0 && srcX < w && srcY >= 0 && srcY < h) {
         const srcIdx = (srcY * w + srcX) * 4;
-        outData[outIdx] = srcData[srcIdx];
-        outData[outIdx + 1] = srcData[srcIdx + 1];
-        outData[outIdx + 2] = srcData[srcIdx + 2];
+        let r = srcData[srcIdx];
+        let g = srcData[srcIdx + 1];
+        let b = srcData[srcIdx + 2];
+
+        if (applyColorCorrection) {
+          if (contrast !== 1.0) {
+            r = (r - 128) * contrast + 128;
+            g = (g - 128) * contrast + 128;
+            b = (b - 128) * contrast + 128;
+          }
+          if (brightness !== 1.0) {
+            r = r * brightness;
+            g = g * brightness;
+            b = b * brightness;
+          }
+          r = Math.min(255, Math.max(0, Math.round(r)));
+          g = Math.min(255, Math.max(0, Math.round(g)));
+          b = Math.min(255, Math.max(0, Math.round(b)));
+        }
+
+        outData[outIdx] = r;
+        outData[outIdx + 1] = g;
+        outData[outIdx + 2] = b;
         outData[outIdx + 3] = 255;
       } else {
         outData[outIdx + 3] = 0;

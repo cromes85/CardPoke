@@ -9,7 +9,9 @@ import {
   Maximize2,
   Camera,
   Layers,
-  Sparkles
+  Sparkles,
+  Sun,
+  Sliders
 } from 'lucide-react';
 import {
   autoDetectCardEdges,
@@ -35,6 +37,17 @@ export default function BorderDetectionCamera() {
 
   // Mode de Détection : 'stand' (Tour/Support 3D) | 'auto' (Table / Libre)
   const [scanMode, setScanMode] = useState('stand');
+
+  // Éclairage & Luminosité (Valeurs par défaut optimisées pour la Tour 3D sombre)
+  const [brightness, setBrightness] = useState(() => {
+    const saved = localStorage.getItem('card_lighting_brightness');
+    return saved ? parseFloat(saved) : 1.35;
+  });
+  const [contrast, setContrast] = useState(() => {
+    const saved = localStorage.getItem('card_lighting_contrast');
+    return saved ? parseFloat(saved) : 1.08;
+  });
+  const [showLightingPanel, setShowLightingPanel] = useState(false);
 
   // États Caméra & Matériel
   const [cameraActive, setCameraActive] = useState(false);
@@ -248,6 +261,26 @@ export default function BorderDetectionCamera() {
     reader.readAsDataURL(file);
   };
 
+  // Gestionnaires de Luminosité & Contraste
+  const handleBrightnessChange = (val) => {
+    const num = parseFloat(val);
+    setBrightness(num);
+    localStorage.setItem('card_lighting_brightness', num.toString());
+  };
+
+  const handleContrastChange = (val) => {
+    const num = parseFloat(val);
+    setContrast(num);
+    localStorage.setItem('card_lighting_contrast', num.toString());
+  };
+
+  const setLightingPreset = (b, c) => {
+    setBrightness(b);
+    setContrast(c);
+    localStorage.setItem('card_lighting_brightness', b.toString());
+    localStorage.setItem('card_lighting_contrast', c.toString());
+  };
+
   // 6. Figer & Extraire la carte redressée (630 x 880 px)
   const handleCaptureWarped = () => {
     if (!corners || corners.length !== 4) return;
@@ -272,7 +305,7 @@ export default function BorderDetectionCamera() {
 
     if (width === 0 || height === 0) return;
 
-    const warped = extractCardWarped(canvas, corners, 630, 880);
+    const warped = extractCardWarped(canvas, corners, 630, 880, brightness, contrast);
     if (warped) {
       setCapturedWarpedImage(warped.toDataURL('image/jpeg', 0.94));
     }
@@ -324,8 +357,24 @@ export default function BorderDetectionCamera() {
           </button>
         </div>
 
-        {/* Boutons Flash & Switch Caméra */}
+        {/* Boutons Flash, Luminosité & Switch Caméra */}
         <div className="flex items-center gap-1.5">
+          {/* Bouton Panneau Éclairage */}
+          <button
+            onClick={() => setShowLightingPanel(prev => !prev)}
+            className={`px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1.5 text-xs ${
+              showLightingPanel || brightness > 1.05
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-md font-bold'
+                : 'bg-slate-800 text-slate-300 border-slate-700'
+            }`}
+            title="Ajuster la luminosité"
+          >
+            <Sun className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-[11px] font-mono">
+              {brightness >= 1.0 ? `+${Math.round((brightness - 1) * 100)}%` : `${Math.round((brightness - 1) * 100)}%`}
+            </span>
+          </button>
+
           {hasTorch && (
             <button
               onClick={toggleTorch}
@@ -334,6 +383,7 @@ export default function BorderDetectionCamera() {
                   ? 'bg-amber-500 text-black border-amber-400 shadow-md'
                   : 'bg-slate-800 text-slate-300 border-slate-700'
               }`}
+              title="Activer/Désactiver la Torche LED"
             >
               <Flashlight className="w-3.5 h-3.5" />
             </button>
@@ -343,6 +393,7 @@ export default function BorderDetectionCamera() {
             <button
               onClick={handleSwitchCamera}
               className="p-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition"
+              title="Changer de caméra"
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
@@ -350,16 +401,115 @@ export default function BorderDetectionCamera() {
         </div>
       </header>
 
+      {/* Panneau Déroulant de Réglage de Luminosité & Éclairage */}
+      {showLightingPanel && (
+        <div className="relative z-30 px-4 py-3 bg-slate-900/95 backdrop-blur-md border-b border-amber-500/30 flex flex-col gap-2.5 shadow-2xl transition-all">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
+              <Sun className="w-4 h-4 text-amber-400" />
+              <span>Boost Luminosité & Contraste</span>
+            </div>
+            <button
+              onClick={() => setLightingPreset(1.0, 1.0)}
+              className="text-[10px] text-slate-400 hover:text-slate-200 underline font-mono"
+            >
+              Réinitialiser (100%)
+            </button>
+          </div>
+
+          {/* Préréglages Rapides 1-Clic */}
+          <div className="grid grid-cols-4 gap-1.5 text-[10px] font-medium">
+            <button
+              onClick={() => setLightingPreset(1.0, 1.0)}
+              className={`py-1.5 rounded-lg border transition ${
+                brightness === 1.0 && contrast === 1.0
+                  ? 'bg-amber-500 text-black font-bold border-amber-400 shadow'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              Standard 100%
+            </button>
+            <button
+              onClick={() => setLightingPreset(1.35, 1.08)}
+              className={`py-1.5 rounded-lg border transition ${
+                brightness === 1.35 && contrast === 1.08
+                  ? 'bg-amber-500 text-black font-bold border-amber-400 shadow'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              ⭐ Tour 3D (+35%)
+            </button>
+            <button
+              onClick={() => setLightingPreset(1.65, 1.12)}
+              className={`py-1.5 rounded-lg border transition ${
+                brightness === 1.65 && contrast === 1.12
+                  ? 'bg-amber-500 text-black font-bold border-amber-400 shadow'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              Lumineux (+65%)
+            </button>
+            <button
+              onClick={() => setLightingPreset(2.0, 1.15)}
+              className={`py-1.5 rounded-lg border transition ${
+                brightness === 2.0 && contrast === 1.15
+                  ? 'bg-amber-500 text-black font-bold border-amber-400 shadow'
+                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+              }`}
+            >
+              Ultra (+100%)
+            </button>
+          </div>
+
+          {/* Curseur de précision Luminosité */}
+          <div className="flex items-center gap-3 pt-1">
+            <span className="text-[11px] text-slate-300 w-24 flex items-center gap-1 font-mono">
+              <Sun className="w-3.5 h-3.5 text-amber-400" />
+              {Math.round(brightness * 100)}%
+            </span>
+            <input
+              type="range"
+              min="0.80"
+              max="2.50"
+              step="0.05"
+              value={brightness}
+              onChange={(e) => handleBrightnessChange(e.target.value)}
+              className="flex-1 accent-amber-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+            />
+          </div>
+
+          {/* Curseur de précision Contraste */}
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-slate-300 w-24 flex items-center gap-1 font-mono">
+              <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+              Contraste {Math.round(contrast * 100)}%
+            </span>
+            <input
+              type="range"
+              min="0.90"
+              max="1.40"
+              step="0.02"
+              value={contrast}
+              onChange={(e) => handleContrastChange(e.target.value)}
+              className="flex-1 accent-indigo-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+            />
+          </div>
+        </div>
+      )}
+
       {/* 2. Viseur Vidéo & Calque de Détection SVG */}
       <div className="relative flex-1 w-full bg-black flex items-center justify-center overflow-hidden">
         
-        {/* Flux Caméra */}
+        {/* Flux Caméra avec Filtre d'Éclairage */}
         <video
           ref={videoRef}
           playsInline
           muted
           autoPlay
           className={`w-full h-full object-cover sm:object-contain ${staticImageSource ? 'hidden' : 'block'}`}
+          style={{
+            filter: `brightness(${brightness}) contrast(${contrast})`
+          }}
         />
 
         {/* Image Statique de Test */}
@@ -368,6 +518,9 @@ export default function BorderDetectionCamera() {
             src={staticImageSource.src}
             alt="Carte de test"
             className="w-full h-full object-contain"
+            style={{
+              filter: `brightness(${brightness}) contrast(${contrast})`
+            }}
           />
         )}
 

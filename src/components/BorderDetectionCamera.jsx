@@ -11,17 +11,16 @@ import {
 } from 'lucide-react';
 import {
   autoDetectCardEdges,
-  TemporalCornerSmoother,
+  RobustCardTracker,
   extractCardWarped,
   POKEMON_RATIO
 } from '../utils/cardEdgeDetector';
 
 export default function BorderDetectionCamera() {
-  // Références matérielles
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const animFrameRef = useRef(null);
-  const smootherRef = useRef(new TemporalCornerSmoother(0.35));
+  const trackerRef = useRef(new RobustCardTracker());
   const fileInputRef = useRef(null);
 
   // États Caméra & Détection
@@ -32,7 +31,7 @@ export default function BorderDetectionCamera() {
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
 
-  // Résultat de Détection 100% Automatique
+  // Résultat de Détection 100% Automatique et Stabilisé
   const [corners, setCorners] = useState(null);
   const [isLocked, setIsLocked] = useState(false);
   const [confidence, setConfidence] = useState(0);
@@ -43,12 +42,12 @@ export default function BorderDetectionCamera() {
   const [capturedWarpedImage, setCapturedWarpedImage] = useState(null);
   const [staticImageSource, setStaticImageSource] = useState(null);
 
-  // FPS & Intervalle
+  // Mesure FPS
   const frameCountRef = useRef(0);
   const lastFpsTimeRef = useRef(performance.now());
   const lastProcessTimeRef = useRef(0);
 
-  // 1. Initialisation Caméra
+  // 1. Démarrage Caméra
   const startCamera = useCallback(async (deviceId = '') => {
     setCameraError(null);
     if (streamRef.current) {
@@ -76,6 +75,7 @@ export default function BorderDetectionCamera() {
 
       setCameraActive(true);
       setStaticImageSource(null);
+      trackerRef.current.reset();
 
       const track = stream.getVideoTracks()[0];
       const capabilities = track.getCapabilities ? track.getCapabilities() : {};
@@ -130,7 +130,7 @@ export default function BorderDetectionCamera() {
     startCamera(nextDev.deviceId);
   };
 
-  // 4. Moteur de Détection Automatique Temps Réel (Boucle RAF)
+  // 4. Boucle de Traitement Vidéo & Suivi Stabilisé (Anti-Jitter)
   useEffect(() => {
     let isRunning = true;
     const workCanvas = document.createElement('canvas');
@@ -139,7 +139,6 @@ export default function BorderDetectionCamera() {
     const processFrame = (timestamp) => {
       if (!isRunning) return;
 
-      // Calcul du FPS
       frameCountRef.current++;
       const now = performance.now();
       if (now - lastFpsTimeRef.current >= 1000) {
@@ -148,8 +147,7 @@ export default function BorderDetectionCamera() {
         lastFpsTimeRef.current = now;
       }
 
-      // Cadencer l'analyse automatique à ~25 FPS pour zéro lag
-      if (timestamp - lastProcessTimeRef.current >= 40) {
+      if (timestamp - lastProcessTimeRef.current >= 35) {
         lastProcessTimeRef.current = timestamp;
 
         const video = videoRef.current;
@@ -171,17 +169,18 @@ export default function BorderDetectionCamera() {
           workCanvas.height = sh;
           workCtx.drawImage(source, 0, 0, sw, sh);
 
-          // Détection 100% Automatique
-          const result = autoDetectCardEdges(workCanvas);
+          // Détection brute
+          const rawResult = autoDetectCardEdges(workCanvas);
 
-          if (result && result.corners) {
-            const smoothedCorners = smootherRef.current.update(result.corners);
-            setCorners(smoothedCorners);
-            setConfidence(result.confidence || 85);
-            setAspectRatio(result.ratio);
-            setIsLocked(true);
+          // Filtrage et stabilisation temporelle anti-tremblement
+          const tracked = trackerRef.current.update(rawResult);
+
+          if (tracked && tracked.corners) {
+            setCorners(tracked.corners);
+            setIsLocked(tracked.isLocked);
+            setConfidence(tracked.confidence);
+            setAspectRatio(tracked.ratio);
           } else {
-            smootherRef.current.update(null);
             setCorners(null);
             setIsLocked(false);
           }
@@ -215,7 +214,7 @@ export default function BorderDetectionCamera() {
         }
         setCameraActive(false);
         setStaticImageSource(img);
-        smootherRef.current.reset();
+        trackerRef.current.reset();
       };
       img.src = ev.target.result;
     };
@@ -269,16 +268,16 @@ export default function BorderDetectionCamera() {
           <div>
             <h1 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
               Détecteur Pokémon
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-medium ${
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-medium transition-colors ${
                 isLocked
                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
                   : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
               }`}>
-                {isLocked ? '🎯 Carte Verrouillée' : '🔍 Recherche...'}
+                {isLocked ? '🎯 Carte Stabilisée' : '🔍 Recherche...'}
               </span>
             </h1>
             <p className="text-[11px] text-slate-400 font-mono">
-              {fps} FPS • Auto-Vision IA
+              {fps} FPS • Anti-Jitter Actif
             </p>
           </div>
         </div>
@@ -348,7 +347,7 @@ export default function BorderDetectionCamera() {
           </div>
         )}
 
-        {/* Calque de Traçage SVG Dynamique */}
+        {/* Calque de Traçage SVG Dynamique & Lissé */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none z-10"
           viewBox="0 0 100 100"
@@ -356,10 +355,10 @@ export default function BorderDetectionCamera() {
         >
           {corners && (
             <>
-              {/* Polygone de bordure lumineuse avec animation néon */}
+              {/* Polygone de bordure lumineuse stabilisé */}
               <polygon
                 points={getSvgPolygonPoints()}
-                className="transition-all duration-75 fill-emerald-500/15 stroke-emerald-400 stroke-[1.2] drop-shadow-[0_0_10px_rgba(52,211,153,0.9)]"
+                className="fill-emerald-500/15 stroke-emerald-400 stroke-[1.2] drop-shadow-[0_0_10px_rgba(52,211,153,0.9)] transition-all duration-100 ease-out"
               />
 
               {/* Réticules lumineux aux 4 coins (TL, TR, BR, BL) */}
@@ -367,7 +366,7 @@ export default function BorderDetectionCamera() {
                 const labels = ['TL', 'TR', 'BR', 'BL'];
                 const colors = ['#38bdf8', '#818cf8', '#34d399', '#f472b6'];
                 return (
-                  <g key={idx}>
+                  <g key={idx} className="transition-all duration-100 ease-out">
                     <circle
                       cx={pt.x * 100}
                       cy={pt.y * 100}
@@ -399,8 +398,8 @@ export default function BorderDetectionCamera() {
         {isLocked && corners && (
           <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-center pointer-events-none">
             <div className="bg-slate-900/90 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/40 text-xs font-mono text-emerald-300 flex items-center gap-2 shadow-xl">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-              <span>4 Bords Cadrés ({aspectRatio.toFixed(2)})</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span>4 Bords Verrouillés ({aspectRatio.toFixed(2)})</span>
             </div>
           </div>
         )}
@@ -411,10 +410,10 @@ export default function BorderDetectionCamera() {
             <div className="w-[65vw] max-w-[280px] aspect-[63/88] rounded-2xl border-2 border-dashed border-slate-600/40 flex flex-col items-center justify-center p-4 text-center">
               <Scan className="w-8 h-8 text-slate-500/60 mb-2 animate-bounce" />
               <p className="text-xs text-slate-400 font-medium">
-                Visez n'importe quelle carte Pokémon
+                Visez une carte Pokémon
               </p>
               <p className="text-[10px] text-slate-500 mt-1">
-                Détection 100% automatique des bords
+                Le cadre se verrouille et se stabilise automatiquement
               </p>
             </div>
           </div>
@@ -454,7 +453,7 @@ export default function BorderDetectionCamera() {
           Capturer & Découper (63x88)
         </button>
 
-        {/* Reprendre Caméra si sur image de test */}
+        {/* Reprendre Caméra */}
         {staticImageSource && (
           <button
             onClick={() => startCamera(selectedDeviceId)}

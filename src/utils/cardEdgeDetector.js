@@ -1,6 +1,5 @@
 /**
- * CardEdgeDetector - Moteur 100% Automatique de Détection des Bords de Cartes Pokémon.
- * Calibré et testé sur jeu de données réelles (précision >98% sans intervention manuelle).
+ * CardEdgeDetector - Moteur 100% Automatique & Tracker Stabilisé de Cartes Pokémon.
  */
 
 export const POKEMON_RATIO = 63 / 88; // 0.7159
@@ -13,7 +12,6 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
   const h = sourceCanvas.height;
   if (!w || !h) return null;
 
-  // Résolution d'analyse temps réel optimisée (360px de large)
   const targetW = 360;
   const scale = targetW / w;
   const targetH = Math.round(h * scale);
@@ -27,7 +25,7 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
   const imgData = ctx.getImageData(0, 0, targetW, targetH);
   const data = imgData.data;
 
-  // 1. Grayscale + Flou Gaussien 5x5
+  // 1. Grayscale + Flou Gaussien
   const gray = new Uint8Array(targetW * targetH);
   for (let i = 0; i < targetW * targetH; i++) {
     const idx = i * 4;
@@ -36,16 +34,16 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
 
   const blurred = gaussianBlur5x5(gray, targetW, targetH);
 
-  // 2. Sobel Magnitude & Orientation
+  // 2. Gradient Sobel 2D
   const gradMag = new Float32Array(targetW * targetH);
   const gradDir = new Float32Array(targetW * targetH);
   computeSobel(blurred, targetW, targetH, gradMag, gradDir);
 
   // 3. Multi-Pass Canny Edge Search
   const thresholds = [
-    { low: 20, high: 60 },
-    { low: 35, high: 95 },
-    { low: 50, high: 130 }
+    { low: 25, high: 70 },
+    { low: 40, high: 105 },
+    { low: 55, high: 140 }
   ];
 
   let bestQuad = null;
@@ -63,7 +61,6 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
       const totalArea = targetW * targetH;
       const areaFrac = area / totalArea;
 
-      // Surface attendue d'une carte : 8% à 90% du champ
       if (areaFrac < 0.08 || areaFrac > 0.90) continue;
 
       for (const epsFrac of [0.015, 0.025, 0.035, 0.045, 0.06]) {
@@ -103,7 +100,7 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
     }
   }
 
-  // 4. Fallback automatique par boîte d'énergie
+  // 4. Fallback automatique
   if (!bestQuad) {
     const obb = detectOrientedBoundingBox(gradMag, targetW, targetH);
     if (obb) bestQuad = obb;
@@ -112,7 +109,135 @@ export function autoDetectCardEdges(sourceCanvas, options = {}) {
   return bestQuad;
 }
 
-// Utilitaires de traitement d'image
+// --------------------------------------------------------------------------------------
+// TRACKER TEMPOREL STABILISATEUR (ANTI-JITTER & HYSTÉRÈSE)
+// --------------------------------------------------------------------------------------
+export class RobustCardTracker {
+  constructor() {
+    this.lockedQuad = null;
+    this.consecutiveHits = 0;
+    this.lostFrames = 0;
+    this.state = 'SEARCHING';
+  }
+
+  update(rawDetection) {
+    if (!rawDetection || !rawDetection.corners) {
+      if (this.state === 'LOCKED') {
+        this.lostFrames++;
+        // Persistance pendant 8 frames (~300ms) pour éliminer les micro-coupures
+        if (this.lostFrames <= 8) {
+          return {
+            corners: this.lockedQuad,
+            isLocked: true,
+            state: 'LOCKED',
+            confidence: 85,
+            ratio: POKEMON_RATIO
+          };
+        }
+      }
+      this.consecutiveHits = 0;
+      this.state = 'SEARCHING';
+      this.lockedQuad = null;
+      return null;
+    }
+
+    const newCorners = rawDetection.corners;
+
+    if (this.state === 'SEARCHING') {
+      this.consecutiveHits++;
+      if (this.consecutiveHits >= 2) {
+        this.state = 'LOCKED';
+        this.lockedQuad = newCorners.map(p => ({ ...p }));
+        this.lostFrames = 0;
+      }
+      return {
+        corners: newCorners,
+        isLocked: this.state === 'LOCKED',
+        state: this.state,
+        confidence: rawDetection.confidence || 75,
+        ratio: rawDetection.ratio || POKEMON_RATIO
+      };
+    }
+
+    // En état LOCKED : association par distance minimale & filtrage anti-jitter
+    this.lostFrames = 0;
+    const matchedCorners = matchCornersByDistance(this.lockedQuad, newCorners);
+
+    let avgDist = 0;
+    for (let i = 0; i < 4; i++) {
+      avgDist += Math.hypot(matchedCorners[i].x - this.lockedQuad[i].x, matchedCorners[i].y - this.lockedQuad[i].y);
+    }
+    avgDist /= 4;
+
+    // Filtre adaptatif :
+    // - Si mouvement minuscule (< 1.8% de l'écran) -> Verrouillage absolu (alpha = 0.04)
+    // - Si mouvement modéré -> Suivi fluide (alpha = 0.25)
+    // - Si grand déplacement (> 15%) -> Réalignement rapide (alpha = 0.75)
+    let alpha = 0.25;
+    if (avgDist < 0.018) {
+      alpha = 0.04;
+    } else if (avgDist > 0.15) {
+      alpha = 0.75;
+    }
+
+    const smoothed = [];
+    for (let i = 0; i < 4; i++) {
+      smoothed.push({
+        x: this.lockedQuad[i].x * (1 - alpha) + matchedCorners[i].x * alpha,
+        y: this.lockedQuad[i].y * (1 - alpha) + matchedCorners[i].y * alpha
+      });
+    }
+
+    this.lockedQuad = smoothed;
+
+    return {
+      corners: smoothed,
+      isLocked: true,
+      state: 'LOCKED',
+      confidence: Math.max(80, rawDetection.confidence || 85),
+      ratio: rawDetection.ratio || POKEMON_RATIO
+    };
+  }
+
+  reset() {
+    this.lockedQuad = null;
+    this.consecutiveHits = 0;
+    this.lostFrames = 0;
+    this.state = 'SEARCHING';
+  }
+}
+
+function matchCornersByDistance(prevQuad, newQuad) {
+  if (!prevQuad || !newQuad || prevQuad.length !== 4 || newQuad.length !== 4) {
+    return newQuad;
+  }
+
+  let bestPerm = newQuad;
+  let minTotalDist = Infinity;
+
+  for (let shift = 0; shift < 4; shift++) {
+    const perm = [
+      newQuad[shift % 4],
+      newQuad[(shift + 1) % 4],
+      newQuad[(shift + 2) % 4],
+      newQuad[(shift + 3) % 4]
+    ];
+
+    let totalDist = 0;
+    for (let i = 0; i < 4; i++) {
+      totalDist += Math.hypot(perm[i].x - prevQuad[i].x, perm[i].y - prevQuad[i].y);
+    }
+
+    if (totalDist < minTotalDist) {
+      minTotalDist = totalDist;
+      bestPerm = perm;
+    }
+  }
+
+  return bestPerm;
+}
+
+// Utilitaires de vision
 function gaussianBlur5x5(src, w, h) {
   const dst = new Uint8Array(w * h);
   const kernel = [
@@ -398,54 +523,6 @@ function detectOrientedBoundingBox(gradMag, w, h) {
     isLandscape: false,
     confidence: 75
   };
-}
-
-/**
- * Lissage Temporel Exponentiel (EMA)
- */
-export class TemporalCornerSmoother {
-  constructor(smoothingFactor = 0.35) {
-    this.alpha = smoothingFactor;
-    this.prevCorners = null;
-    this.lostFrames = 0;
-  }
-
-  update(newCorners) {
-    if (!newCorners) {
-      this.lostFrames++;
-      if (this.lostFrames > 8) this.prevCorners = null;
-      return this.prevCorners;
-    }
-
-    this.lostFrames = 0;
-    if (!this.prevCorners) {
-      this.prevCorners = newCorners.map(p => ({ ...p }));
-      return this.prevCorners;
-    }
-
-    let maxDist = 0;
-    for (let i = 0; i < 4; i++) {
-      const d = Math.hypot(newCorners[i].x - this.prevCorners[i].x, newCorners[i].y - this.prevCorners[i].y);
-      if (d > maxDist) maxDist = d;
-    }
-
-    const dynamicAlpha = maxDist > 0.12 ? 0.85 : this.alpha;
-    const smoothed = [];
-    for (let i = 0; i < 4; i++) {
-      smoothed.push({
-        x: this.prevCorners[i].x * (1 - dynamicAlpha) + newCorners[i].x * dynamicAlpha,
-        y: this.prevCorners[i].y * (1 - dynamicAlpha) + newCorners[i].y * dynamicAlpha
-      });
-    }
-
-    this.prevCorners = smoothed;
-    return smoothed;
-  }
-
-  reset() {
-    this.prevCorners = null;
-    this.lostFrames = 0;
-  }
 }
 
 /**

@@ -3,6 +3,222 @@
 export const CARD_ASPECT_RATIO = 63 / 88; // ~0.7159 (Standard Pokémon Card)
 
 /**
+ * Real-Time Document / Card Quad Detector for Live Camera Streams (Android Document Scanner Mode)
+ * Detects 4 corners [TL, TR, BR, BL] of a Pokémon card anywhere in the live video frame,
+ * with temporal EMA smoothing and stability assessment.
+ *
+ * @param {HTMLVideoElement | HTMLCanvasElement} source - The active video or canvas element
+ * @param {Array<{x: number, y: number}> | null} prevCorners - Previous smoothed corners (for EMA smoothing)
+ * @param {Object} options - Options { targetAspect, minAreaPercent, maxAreaPercent, maxDim }
+ * @returns {Object | null} Result { corners, relativeCorners, isStable, confidence, headerQuad, relativeHeaderQuad, center }
+ */
+export function detectLiveCardQuad(source, prevCorners = null, options = {}) {
+  if (!source) return null;
+
+  const vw = source.videoWidth || source.naturalWidth || source.width || 0;
+  const vh = source.videoHeight || source.naturalHeight || source.height || 0;
+  if (vw < 50 || vh < 50) return null;
+
+  const targetAspect = options.targetAspect || CARD_ASPECT_RATIO; // ~0.716
+  const maxDim = options.maxDim || 320; // Fast downscale for high FPS
+  const scale = Math.min(1, maxDim / Math.max(vw, vh));
+  const sw = Math.floor(vw * scale);
+  const sh = Math.floor(vh * scale);
+
+  if (typeof document === 'undefined') return null;
+
+  if (!detectLiveCardQuad._canvas) {
+    detectLiveCardQuad._canvas = document.createElement('canvas');
+  }
+  const canvas = detectLiveCardQuad._canvas;
+  if (canvas.width !== sw || canvas.height !== sh) {
+    canvas.width = sw;
+    canvas.height = sh;
+  }
+
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(source, 0, 0, sw, sh);
+
+  let detectedRaw = null;
+  let confidence = 0;
+
+  // 1. OpenCV.js Contour Analysis if loaded
+  if (typeof window !== 'undefined' && window.cv && window.cv.Mat && window.cv.imread) {
+    try {
+      const cv = window.cv;
+      const srcMat = cv.imread(canvas);
+      const gray = new cv.Mat();
+      const blurred = new cv.Mat();
+      const edged = new cv.Mat();
+      const dilated = new cv.Mat();
+
+      cv.cvtColor(srcMat, gray, cv.COLOR_RGBA2GRAY);
+      cv.GaussianBlur(gray, blurred, new cv.Size(3, 3), 0);
+      cv.Canny(blurred, edged, 25, 110);
+
+      const M = cv.Mat.ones(3, 3, cv.CV_8U);
+      cv.dilate(edged, dilated, M);
+
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(dilated, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+      const totalFrameArea = sw * sh;
+      const minArea = totalFrameArea * (options.minAreaPercent || 0.05);
+      const maxArea = totalFrameArea * (options.maxAreaPercent || 0.95);
+
+      let bestScore = -1;
+
+      for (let i = 0; i < contours.size(); ++i) {
+        const contour = contours.get(i);
+        const area = cv.contourArea(contour);
+
+        if (area > minArea && area < maxArea) {
+          const peri = cv.arcLength(contour, true);
+          let quadPts = null;
+
+          for (const eps of [0.02, 0.035, 0.05]) {
+            const approx = new cv.Mat();
+            cv.approxPolyDP(contour, approx, eps * peri, true);
+            if (approx.rows === 4) {
+              quadPts = [];
+              for (let j = 0; j < 4; j++) {
+                quadPts.push({
+                  x: approx.data32S[j * 2] / scale,
+                  y: approx.data32S[j * 2 + 1] / scale
+                });
+              }
+              approx.delete();
+              break;
+            }
+            approx.delete();
+          }
+
+          if (!quadPts) {
+            const rotRect = cv.minAreaRect(contour);
+            const boxPts = new cv.Mat();
+            cv.boxPoints(rotRect, boxPts);
+            quadPts = [];
+            for (let j = 0; j < 4; j++) {
+              quadPts.push({
+                x: boxPts.data32F[j * 2] / scale,
+                y: boxPts.data32F[j * 2 + 1] / scale
+              });
+            }
+            boxPts.delete();
+          }
+
+          if (quadPts && quadPts.length === 4) {
+            const ordered = orderCorners(quadPts);
+            const w1 = Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y);
+            const w2 = Math.hypot(ordered[2].x - ordered[3].x, ordered[2].y - ordered[3].y);
+            const h1 = Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y);
+            const h2 = Math.hypot(ordered[2].x - ordered[1].x, ordered[2].y - ordered[1].y);
+
+            const avgW = (w1 + w2) / 2;
+            const avgH = (h1 + h2) / 2;
+            const ratio = Math.min(avgW, avgH) / Math.max(avgW, avgH);
+            const ratioDiff = Math.abs(ratio - targetAspect);
+
+            if (ratioDiff < 0.28) {
+              const score = (area / totalFrameArea) * (1 - ratioDiff * 2);
+              if (score > bestScore) {
+                bestScore = score;
+                detectedRaw = ordered;
+                confidence = Math.min(0.98, Math.max(0.4, 1.0 - ratioDiff * 1.8));
+              }
+            }
+          }
+        }
+      }
+
+      srcMat.delete();
+      gray.delete();
+      blurred.delete();
+      edged.delete();
+      dilated.delete();
+      M.delete();
+      contours.delete();
+      hierarchy.delete();
+    } catch (e) {
+      console.warn("OpenCV live detection fallback:", e);
+    }
+  }
+
+  // 2. Pure JS Fallback
+  if (!detectedRaw) {
+    try {
+      const jsResult = detectCardCornersPureJS(canvas);
+      if (jsResult && jsResult.length === 4) {
+        detectedRaw = jsResult.map(pt => ({
+          x: pt.x / scale,
+          y: pt.y / scale
+        }));
+        confidence = 0.85;
+      }
+    } catch (e) {}
+  }
+
+  if (!detectedRaw || detectedRaw.length !== 4) {
+    return null;
+  }
+
+  // 3. Temporal Smoothing (EMA Filter)
+  let smoothed = detectedRaw;
+  let isStable = false;
+  let maxMovement = 0;
+
+  if (prevCorners && prevCorners.length === 4) {
+    const alpha = 0.6; // 60% new frame, 40% prev frame
+    smoothed = detectedRaw.map((pt, i) => {
+      const prev = prevCorners[i];
+      const move = Math.hypot(pt.x - prev.x, pt.y - prev.y);
+      if (move > maxMovement) maxMovement = move;
+      return {
+        x: prev.x + (pt.x - prev.x) * alpha,
+        y: prev.y + (pt.y - prev.y) * alpha
+      };
+    });
+
+    const moveTolerance = Math.max(vw, vh) * 0.02;
+    isStable = maxMovement < moveTolerance;
+  }
+
+  // Percentage (0 to 100) for SVG Overlay
+  const relativeCorners = smoothed.map(pt => ({
+    x: Math.max(0, Math.min(100, (pt.x / vw) * 100)),
+    y: Math.max(0, Math.min(100, (pt.y / vh) * 100))
+  }));
+
+  // Top Header Quad (Top 22% of Card for Nom & PV OCR)
+  const [tl, tr, br, bl] = smoothed;
+  const headerQuad = [
+    { x: tl.x, y: tl.y },
+    { x: tr.x, y: tr.y },
+    { x: tr.x + (br.x - tr.x) * 0.22, y: tr.y + (br.y - tr.y) * 0.22 },
+    { x: tl.x + (bl.x - tl.x) * 0.22, y: tl.y + (bl.y - tl.y) * 0.22 }
+  ];
+
+  const relativeHeaderQuad = headerQuad.map(pt => ({
+    x: Math.max(0, Math.min(100, (pt.x / vw) * 100)),
+    y: Math.max(0, Math.min(100, (pt.y / vh) * 100))
+  }));
+
+  const centerX = (tl.x + tr.x + br.x + bl.x) / 4;
+  const centerY = (tl.y + tr.y + br.y + bl.y) / 4;
+
+  return {
+    corners: smoothed,
+    relativeCorners,
+    headerQuad,
+    relativeHeaderQuad,
+    center: { x: centerX, y: centerY, relX: (centerX / vw) * 100, relY: (centerY / vh) * 100 },
+    confidence,
+    isStable
+  };
+}
+
+/**
  * Robust Card Edge & 4-Corner Detection
  * Combines OpenCV.js (if available) with Multi-Ray Sobel Profiler & Chroma Saliency Pure JS detector
  */

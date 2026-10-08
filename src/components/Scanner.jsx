@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { 
   detectCardCorners, 
+  detectLiveCardQuad,
   CARD_ASPECT_RATIO, 
   warpPerspective,
   analyzeLightingLevel,
@@ -51,6 +52,16 @@ export default function Scanner({
   const [torchOn, setTorchOn] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
 
+  // Real-Time Document Quad Detection (Android Style Live Auto-Detector)
+  const [isAutoDocMode, setIsAutoDocMode] = useState(() => {
+    const saved = localStorage.getItem('pokescan_autodoc_mode');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [liveQuad, setLiveQuad] = useState(null);
+  const prevQuadCornersRef = useRef(null);
+  const liveQuadRef = useRef(null);
+  const lastQuadSeenTimeRef = useRef(0);
+
   // Optical & Digital Zoom Engine for 3D Tower & Distance Calibration (2D Viewport Pan & Zoom)
   const [zoom, setZoom] = useState(() => {
     const saved = localStorage.getItem('pokescan_zoom_3d');
@@ -74,6 +85,7 @@ export default function Scanner({
   const [liveHeaderScan, setLiveHeaderScan] = useState({
     name: '',
     hp: '',
+    stage: '',
     isSearching: false,
     lastScannedTime: 0
   });
@@ -335,7 +347,61 @@ export default function Scanner({
     return () => clearInterval(interval);
   }, [hasCamera, cameraError]);
 
-  // Standby Real-Time Name & PV / HP Detection Loop (Cadre Bleu Dynamique sur Zone Zoomée)
+  // Real-Time Live Document / Card Quad Detection Loop (Android Document Scanner Mode)
+  useEffect(() => {
+    if (!hasCamera || cameraError || !isAutoDocMode) {
+      setLiveQuad(null);
+      liveQuadRef.current = null;
+      prevQuadCornersRef.current = null;
+      return;
+    }
+
+    let isRunning = true;
+    let animId;
+    let lastScanTime = 0;
+
+    const runLiveDocScan = () => {
+      if (!isRunning) return;
+
+      const now = performance.now();
+      // Scan every ~70ms (~14 FPS) for smooth real-time tracking without lagging UI
+      if (now - lastScanTime >= 70 && videoRef.current && videoRef.current.readyState >= 2 && !isProcessing) {
+        lastScanTime = now;
+        try {
+          const video = videoRef.current;
+          const quad = detectLiveCardQuad(video, prevQuadCornersRef.current, {
+            targetAspect: CARD_ASPECT_RATIO,
+            minAreaPercent: 0.05,
+            maxAreaPercent: 0.95
+          });
+
+          if (quad) {
+            prevQuadCornersRef.current = quad.corners;
+            liveQuadRef.current = quad;
+            lastQuadSeenTimeRef.current = Date.now();
+            setLiveQuad(quad);
+          } else {
+            // Keep quad for ~500ms before fading out to prevent flickering
+            if (Date.now() - lastQuadSeenTimeRef.current > 500) {
+              prevQuadCornersRef.current = null;
+              liveQuadRef.current = null;
+              setLiveQuad(null);
+            }
+          }
+        } catch (e) {}
+      }
+
+      animId = requestAnimationFrame(runLiveDocScan);
+    };
+
+    animId = requestAnimationFrame(runLiveDocScan);
+    return () => {
+      isRunning = false;
+      cancelAnimationFrame(animId);
+    };
+  }, [hasCamera, cameraError, isAutoDocMode, isProcessing]);
+
+  // Standby Real-Time Name & PV / HP Detection Loop (Cadre Bleu Dynamique sur Zone Détectée ou Zoomée)
   useEffect(() => {
     if (!hasCamera || cameraError || isProcessing) return;
 
@@ -347,26 +413,42 @@ export default function Scanner({
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
 
-      // Calculate Zoomed ROI (matching the framed card directly)
-      const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
+      let headerCanvas = null;
 
-      // In the zoomed card frame, extract the top 22% (where Name and HP/PV are printed)
-      const headerW = Math.min(vw - cropX - 5, Math.floor(cropW * 0.94));
-      const headerH = Math.min(vh - cropY - 5, Math.floor(cropH * 0.22));
-      const headerX = Math.min(vw - headerW, Math.floor(cropX + cropW * 0.03));
-      const headerY = Math.min(vh - headerH, Math.floor(cropY + cropH * 0.02));
+      // 1. If Live Document Quad is locked, extract the top header directly from the live card polygon!
+      if (isAutoDocMode && liveQuadRef.current && liveQuadRef.current.headerQuad) {
+        try {
+          const fullCanvas = document.createElement('canvas');
+          fullCanvas.width = vw;
+          fullCanvas.height = vh;
+          const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
+          fullCtx.drawImage(video, 0, 0, vw, vh);
 
-      try {
-        isLiveScanningRef.current = true;
-        setLiveHeaderScan(prev => ({ ...prev, isSearching: true }));
+          headerCanvas = warpPerspective(fullCanvas, liveQuadRef.current.headerQuad, 400, 110);
+        } catch (e) {}
+      }
+
+      // 2. Fallback: Extract from zoomed ROI crop
+      if (!headerCanvas) {
+        const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
+        const headerW = Math.min(vw - cropX - 5, Math.floor(cropW * 0.94));
+        const headerH = Math.min(vh - cropY - 5, Math.floor(cropH * 0.22));
+        const headerX = Math.min(vw - headerW, Math.floor(cropX + cropW * 0.03));
+        const headerY = Math.min(vh - headerH, Math.floor(cropY + cropH * 0.02));
 
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = headerW;
         tempCanvas.height = headerH;
         const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(video, headerX, headerY, headerW, headerH, 0, 0, headerW, headerH);
+        headerCanvas = tempCanvas;
+      }
 
-        const enhanced = autoEnhanceLighting(tempCanvas, 0.9);
+      try {
+        isLiveScanningRef.current = true;
+        setLiveHeaderScan(prev => ({ ...prev, isSearching: true }));
+
+        const enhanced = autoEnhanceLighting(headerCanvas, 0.9);
         const res = await ocrService.scanHeaderLive(enhanced);
 
         if (res && (res.name || res.hp)) {
@@ -388,9 +470,9 @@ export default function Scanner({
     }, 1400);
 
     return () => clearInterval(interval);
-  }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus, zoom, offsetX, offsetY, getZoomedCropDimensions]);
+  }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus, zoom, offsetX, offsetY, isAutoDocMode, getZoomedCropDimensions]);
 
-  // Single Frame Capture (for Button & Auto Modes) with Zoomed ROI & Auto-Lighting Equalizer
+  // Single Frame Capture with Live Document Auto-Warp or Zoomed ROI
   const captureFrame = useCallback(() => {
     if (!videoRef.current || isProcessing) return null;
     soundManager.playSnap();
@@ -398,23 +480,50 @@ export default function Scanner({
     const video = videoRef.current;
     const vw = video.videoWidth || 1280;
     const vh = video.videoHeight || 720;
-    const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = cropW;
-    canvas.height = cropH;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+    const fullCanvas = document.createElement('canvas');
+    fullCanvas.width = vw;
+    fullCanvas.height = vh;
+    const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
+    fullCtx.drawImage(video, 0, 0, vw, vh);
 
-    // Apply Dynamic Tone Mapping & Shadow Equalizer
-    const enhancedCanvas = autoEnhanceLighting(canvas, 0.85);
-    const corners = detectCardCorners(enhancedCanvas);
+    let finalCanvas = null;
+    let detectedCorners = null;
+
+    // 1. If Live Document Quad is active, do instant Perspective Warp (Android Document Scanner Mode)
+    if (isAutoDocMode && liveQuadRef.current && liveQuadRef.current.corners) {
+      try {
+        const warped = warpPerspective(fullCanvas, liveQuadRef.current.corners, 630, 880);
+        finalCanvas = autoEnhanceLighting(warped, 0.85);
+        detectedCorners = [
+          { x: 0, y: 0 },
+          { x: 630, y: 0 },
+          { x: 630, y: 880 },
+          { x: 0, y: 880 }
+        ];
+      } catch (e) {
+        console.warn("Auto-doc warp error:", e);
+      }
+    }
+
+    // 2. Fallback: Zoomed ROI crop
+    if (!finalCanvas) {
+      const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
+      const cropCanvas = document.createElement('canvas');
+      cropCanvas.width = cropW;
+      cropCanvas.height = cropH;
+      const cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true });
+      cropCtx.drawImage(fullCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+      finalCanvas = autoEnhanceLighting(cropCanvas, 0.85);
+      detectedCorners = detectCardCorners(finalCanvas);
+    }
 
     onCardCaptured({
-      sourceCanvas: enhancedCanvas,
-      detectedCorners: corners
+      sourceCanvas: finalCanvas,
+      detectedCorners: detectedCorners
     });
-  }, [isProcessing, onCardCaptured, zoom, offsetX, offsetY, getZoomedCropDimensions]);
+  }, [isProcessing, onCardCaptured, isAutoDocMode, zoom, offsetX, offsetY, getZoomedCropDimensions]);
 
   // Handle Standard Auto-Scan Mode Countdown
   useEffect(() => {
@@ -574,12 +683,28 @@ export default function Scanner({
             lastCaptureTimeRef.current = now;
             soundManager.playDropBeep();
 
-            // Capture high-res zoomed frame
-            const snapCanvas = document.createElement('canvas');
-            snapCanvas.width = cropW;
-            snapCanvas.height = cropH;
-            const snapCtx = snapCanvas.getContext('2d');
-            snapCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+            const fullCanvas = document.createElement('canvas');
+            fullCanvas.width = vw;
+            fullCanvas.height = vh;
+            const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
+            fullCtx.drawImage(video, 0, 0, vw, vh);
+
+            let snapCanvas = null;
+            // 1. If Live Document Quad is locked on card in chute, do instant auto-warp!
+            if (isAutoDocMode && liveQuadRef.current && liveQuadRef.current.corners) {
+              try {
+                snapCanvas = warpPerspective(fullCanvas, liveQuadRef.current.corners, 630, 880);
+              } catch (e) {}
+            }
+
+            // 2. Fallback: High-res zoomed frame crop
+            if (!snapCanvas) {
+              snapCanvas = document.createElement('canvas');
+              snapCanvas.width = cropW;
+              snapCanvas.height = cropH;
+              const snapCtx = snapCanvas.getContext('2d');
+              snapCtx.drawImage(fullCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+            }
 
             // Add to background queue
             batchQueueRef.current.push({ canvas: snapCanvas, time: now });
@@ -600,7 +725,7 @@ export default function Scanner({
 
     animId = requestAnimationFrame(checkMotionLoop);
     return () => cancelAnimationFrame(animId);
-  }, [scanMode, batchStatus, hasCamera, isProcessingQueue, processBatchQueue, zoom, offsetX, offsetY, getZoomedCropDimensions]);
+  }, [scanMode, batchStatus, hasCamera, isProcessingQueue, processBatchQueue, isAutoDocMode, zoom, offsetX, offsetY, getZoomedCropDimensions]);
 
   // Start Batch Session
   const handleStartBatch = () => {
@@ -759,30 +884,49 @@ export default function Scanner({
           </div>
         )}
 
-        {/* Real-time Ambient Lighting Status Badge */}
+        {/* Real-time Ambient Lighting & Auto-Doc Badges */}
         {hasCamera && !cameraError && (
-          <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-lg text-[10px] sm:text-[11px] font-bold transition-all">
-            <span 
-              className="w-2 h-2 rounded-full animate-pulse shrink-0" 
-              style={{ backgroundColor: lightingInfo.color || '#10b981' }} 
-            />
-            <span className="text-slate-200 truncate max-w-[130px] sm:max-w-none">
-              {lightingInfo.label}
-            </span>
-            {lightingInfo.needsBoost && hasTorch && !torchOn && (
-              <button
-                onClick={toggleTorch}
-                title="Allumer la torche pour compenser le manque de lumière"
-                className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-[9px] font-bold transition-colors"
-              >
-                + Torche
-              </button>
-            )}
+          <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 flex-wrap max-w-[75%]">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-lg text-[10px] sm:text-[11px] font-bold transition-all">
+              <span 
+                className="w-2 h-2 rounded-full animate-pulse shrink-0" 
+                style={{ backgroundColor: lightingInfo.color || '#10b981' }} 
+              />
+              <span className="text-slate-200 truncate max-w-[90px] sm:max-w-none">
+                {lightingInfo.label}
+              </span>
+              {lightingInfo.needsBoost && hasTorch && !torchOn && (
+                <button
+                  onClick={toggleTorch}
+                  title="Allumer la torche pour compenser le manque de lumière"
+                  className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-[9px] font-bold transition-colors"
+                >
+                  + Torche
+                </button>
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                const next = !isAutoDocMode;
+                setIsAutoDocMode(next);
+                localStorage.setItem('pokescan_autodoc_mode', String(next));
+              }}
+              title="Mode Scanner de Documents Android : Détection et recadrage automatique 4 coins en direct"
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-xl backdrop-blur-md border shadow-lg text-[10px] sm:text-[11px] font-bold transition-all ${
+                isAutoDocMode
+                  ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/60 shadow-emerald-500/20'
+                  : 'bg-slate-950/85 text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <Scan className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Auto-Cadrage {isAutoDocMode ? 'ON' : 'OFF'}</span>
+            </button>
           </div>
         )}
 
-        {/* Interactive Touch Drag Tip */}
-        {hasCamera && !cameraError && scanMode === 'batch3d' && (
+        {/* Interactive Touch Drag Tip (when manual framing) */}
+        {hasCamera && !cameraError && scanMode === 'batch3d' && (!isAutoDocMode || !liveQuad) && (
           <div className="absolute top-3 right-14 z-20 flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/30 text-amber-300 text-[9.5px] font-bold backdrop-blur-md pointer-events-none">
             <span>👆 Glissez pour centrer</span>
           </div>
@@ -925,116 +1069,187 @@ export default function Scanner({
           </div>
         )}
 
-        {/* 3D Support Calibration HUD Overlay */}
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
-          <div 
-            className="relative w-full max-w-[270px] sm:max-w-[310px] aspect-[63/88] rounded-2xl border-2 border-dashed flex flex-col justify-between p-3 transition-all duration-300"
-            style={{
-              borderColor: scanMode === 'batch3d' 
-                ? (batchStatus === 'running' ? '#10b981' : '#059669') 
-                : '#ef4444',
-              boxShadow: scanMode === 'batch3d' && batchStatus === 'running'
-                ? '0 0 35px rgba(16, 185, 129, 0.25), inset 0 0 20px rgba(16, 185, 129, 0.15)'
-                : '0 0 25px rgba(239, 68, 68, 0.15)'
-            }}
-          >
-            {/* 4 Corner Reticles */}
-            <div className={`absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 rounded-tl-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
-            <div className={`absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 rounded-tr-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
-            <div className={`absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 rounded-bl-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
-            <div className={`absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 rounded-br-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
+        {/* REAL-TIME DYNAMIC MAGNETIC QUAD OVERLAY (Android Document Scanner Mode) */}
+        {isAutoDocMode && liveQuad && (
+          <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
+            <svg 
+              viewBox="0 0 100 100" 
+              preserveAspectRatio="none" 
+              className="w-full h-full absolute inset-0"
+            >
+              {/* Full Card Glowing Polygonal Boundary */}
+              <polygon 
+                points={liveQuad.relativeCorners.map(p => `${p.x},${p.y}`).join(' ')} 
+                fill="rgba(16, 185, 129, 0.12)" 
+                stroke="#10b981" 
+                strokeWidth="0.8"
+                strokeDasharray="2.5 1.5"
+                className="transition-all duration-75"
+              />
 
-            {/* Target Card Header Guide */}
-            <div className="w-full flex items-center justify-between mb-1">
-              <span className={`text-[9.5px] sm:text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 border ${
-                scanMode === 'batch3d' ? 'text-emerald-400 border-emerald-500/30' : 'text-red-400 border-red-500/30'
-              }`}>
-                {scanMode === 'batch3d' ? 'Support 3D' : 'Viseur Carte'}
-              </span>
-              <span className="text-[9.5px] sm:text-[10px] text-white/70 bg-slate-950/85 px-1.5 py-0.5 rounded font-mono">
-                63x88mm
-              </span>
-            </div>
+              {/* Dynamic Top Header Blue Polygon (Cadre Bleu Nom & PV) */}
+              <polygon 
+                points={liveQuad.relativeHeaderQuad.map(p => `${p.x},${p.y}`).join(' ')} 
+                fill="rgba(59, 130, 246, 0.32)" 
+                stroke="#38bdf8" 
+                strokeWidth="0.9"
+                className="transition-all duration-75"
+              />
 
-            {/* DYNAMIC BLUE TARGETING FRAME (Cadre Bleu : En haut de la carte pour Nom & PV) */}
-            <div className="relative w-full rounded-xl border-2 border-blue-400 bg-blue-500/20 backdrop-blur-[1px] p-2 flex flex-col justify-between shadow-[0_0_22px_rgba(59,130,246,0.5),inset_0_0_12px_rgba(59,130,246,0.25)] transition-all min-h-[66px] sm:min-h-[74px]">
-              {/* 4 Blue Inner Corner Reticles */}
-              <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-cyan-300 rounded-tl-sm" />
-              <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-cyan-300 rounded-tr-sm" />
-              <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-cyan-300 rounded-bl-sm" />
-              <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-cyan-300 rounded-br-sm" />
+              {/* 4 Corner Magnetic Target Reticles */}
+              {liveQuad.relativeCorners.map((pt, idx) => (
+                <g key={idx}>
+                  <circle cx={pt.x} cy={pt.y} r="1.6" fill="#34d399" stroke="#064e3b" strokeWidth="0.5" />
+                  <circle cx={pt.x} cy={pt.y} r="0.6" fill="#ffffff" />
+                </g>
+              ))}
+            </svg>
 
-              {/* Header Label inside Blue Frame */}
-              <div className="flex items-center justify-between w-full">
-                <span className="flex items-center gap-1.5 text-[8.5px] sm:text-[9.5px] font-black tracking-wide uppercase px-2 py-0.5 rounded bg-blue-600 text-white shadow-md border border-blue-400/50">
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-300 animate-ping" />
-                  <span>Cadre Bleu : Haut de la Carte</span>
-                </span>
-                {liveHeaderScan.isSearching ? (
-                  <span className="text-[8.5px] text-cyan-300 font-mono font-bold animate-pulse">
-                    SCAN...
-                  </span>
-                ) : (
-                  <span className="text-[8.5px] text-blue-300/90 font-semibold">
-                    Nom & PV
-                  </span>
-                )}
+            {/* Floating Live Badge & Header Result centered over detected card */}
+            <div 
+              style={{ 
+                left: `${liveQuad.center.relX}%`, 
+                top: `${Math.max(6, liveQuad.relativeCorners[0].y - 6)}%` 
+              }}
+              className="absolute -translate-x-1/2 -translate-y-full flex flex-col items-center gap-1 transition-all duration-100 max-w-[280px]"
+            >
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950/95 border border-emerald-400 text-emerald-300 shadow-2xl text-[10px] sm:text-xs font-black backdrop-blur-md">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <span>🎯 Document Détecté (Auto-Cadré)</span>
               </div>
 
-              {/* Dynamic Live Result Pill */}
-              <div className="flex items-center justify-center w-full my-auto py-0.5">
-                {liveHeaderScan.name || liveHeaderScan.hp ? (
-                  <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-slate-950/95 border border-cyan-400 text-cyan-300 font-black text-[11px] sm:text-xs shadow-xl animate-in zoom-in-95">
-                    <span className="text-amber-400 text-xs">🎯</span>
-                    {liveHeaderScan.stage && (
-                      <span className="text-[8.5px] px-1 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                        {liveHeaderScan.stage}
-                      </span>
-                    )}
-                    <span className="truncate max-w-[110px] sm:max-w-[150px]">{liveHeaderScan.name || 'Pokémon'}</span>
-                    {liveHeaderScan.hp && (
-                      <span className="px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-200 border border-cyan-500/50 text-[10px] font-mono">
-                        {liveHeaderScan.hp}
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1 text-[8.5px] sm:text-[9.5px] text-blue-200/90 font-medium bg-slate-950/70 px-2 py-0.5 rounded-md">
-                    <span className="animate-pulse">🔍 Analyse active du Nom en haut...</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Blue Laser Ray Animation */}
-              <div className="absolute inset-x-1 h-[2px] bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_8px_#38bdf8] animate-pulse opacity-80" />
-            </div>
-
-            {/* Illustration & Attack Zone Spacer */}
-            <div className="w-full flex-1 flex flex-col items-center justify-center border border-dashed border-slate-700/30 rounded-xl my-1.5 bg-slate-950/15">
-              <span className="text-[8.5px] sm:text-[9px] text-slate-500 font-semibold tracking-wider uppercase">
-                Illustration & Attaques
-              </span>
-            </div>
-
-            {/* Scanning Beam (Support 3D) */}
-            {batchStatus === 'running' && (
-              <div className="absolute inset-x-2 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_#10b981] animate-scan" />
-            )}
-
-            {/* Status Footer Guide */}
-            <div className="w-full flex items-center justify-center">
-              {scanMode === 'batch3d' && batchStatus === 'running' ? (
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse">
-                  {motionIndicator === 'chute' ? '⚡ Chute détectée...' : motionIndicator === 'analyse' ? '🔍 Stabilisation & Scan...' : '✨ En attente de la carte suivante...'}
-                </span>
-              ) : (
-                <span className="text-[9px] sm:text-[9.5px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 text-slate-400 border border-slate-700">
-                  Gardez la carte droite dans le cadre
-                </span>
+              {/* Dynamic OCR Live Tag for Top of Card */}
+              {(liveHeaderScan.name || liveHeaderScan.hp) && (
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-blue-950/95 border border-cyan-400 text-cyan-200 text-[10.5px] font-black shadow-lg">
+                  {liveHeaderScan.stage && (
+                    <span className="text-[8px] px-1 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                      {liveHeaderScan.stage}
+                    </span>
+                  )}
+                  <span className="truncate max-w-[120px]">{liveHeaderScan.name}</span>
+                  {liveHeaderScan.hp && (
+                    <span className="font-mono text-[9.5px] text-cyan-300 px-1 bg-cyan-900/60 rounded">
+                      {liveHeaderScan.hp}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
           </div>
-        </div>
+        )}
+
+        {/* 3D Support Calibration HUD Overlay (Fallback / Guide when not locked) */}
+        {(!isAutoDocMode || !liveQuad) && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
+            <div 
+              className="relative w-full max-w-[270px] sm:max-w-[310px] aspect-[63/88] rounded-2xl border-2 border-dashed flex flex-col justify-between p-3 transition-all duration-300"
+              style={{
+                borderColor: scanMode === 'batch3d' 
+                  ? (batchStatus === 'running' ? '#10b981' : '#059669') 
+                  : '#ef4444',
+                boxShadow: scanMode === 'batch3d' && batchStatus === 'running'
+                  ? '0 0 35px rgba(16, 185, 129, 0.25), inset 0 0 20px rgba(16, 185, 129, 0.15)'
+                  : '0 0 25px rgba(239, 68, 68, 0.15)'
+              }}
+            >
+              {/* 4 Corner Reticles */}
+              <div className={`absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 rounded-tl-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
+              <div className={`absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 rounded-tr-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
+              <div className={`absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 rounded-bl-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
+              <div className={`absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 rounded-br-lg ${scanMode === 'batch3d' ? 'border-emerald-400' : 'border-red-500'}`} />
+
+              {/* Target Card Header Guide */}
+              <div className="w-full flex items-center justify-between mb-1">
+                <span className={`text-[9.5px] sm:text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 border ${
+                  scanMode === 'batch3d' ? 'text-emerald-400 border-emerald-500/30' : 'text-red-400 border-red-500/30'
+                }`}>
+                  {scanMode === 'batch3d' ? 'Support 3D' : 'Viseur Carte'}
+                </span>
+                <span className="text-[9.5px] sm:text-[10px] text-white/70 bg-slate-950/85 px-1.5 py-0.5 rounded font-mono">
+                  63x88mm
+                </span>
+              </div>
+
+              {/* DYNAMIC BLUE TARGETING FRAME (Cadre Bleu : En haut de la carte pour Nom & PV) */}
+              <div className="relative w-full rounded-xl border-2 border-blue-400 bg-blue-500/20 backdrop-blur-[1px] p-2 flex flex-col justify-between shadow-[0_0_22px_rgba(59,130,246,0.5),inset_0_0_12px_rgba(59,130,246,0.25)] transition-all min-h-[66px] sm:min-h-[74px]">
+                {/* 4 Blue Inner Corner Reticles */}
+                <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-cyan-300 rounded-tl-sm" />
+                <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-cyan-300 rounded-tr-sm" />
+                <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-cyan-300 rounded-bl-sm" />
+                <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-cyan-300 rounded-br-sm" />
+
+                {/* Header Label inside Blue Frame */}
+                <div className="flex items-center justify-between w-full">
+                  <span className="flex items-center gap-1.5 text-[8.5px] sm:text-[9.5px] font-black tracking-wide uppercase px-2 py-0.5 rounded bg-blue-600 text-white shadow-md border border-blue-400/50">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-300 animate-ping" />
+                    <span>Cadre Bleu : Haut de la Carte</span>
+                  </span>
+                  {liveHeaderScan.isSearching ? (
+                    <span className="text-[8.5px] text-cyan-300 font-mono font-bold animate-pulse">
+                      SCAN...
+                    </span>
+                  ) : (
+                    <span className="text-[8.5px] text-blue-300/90 font-semibold">
+                      Nom & PV
+                    </span>
+                  )}
+                </div>
+
+                {/* Dynamic Live Result Pill */}
+                <div className="flex items-center justify-center w-full my-auto py-0.5">
+                  {liveHeaderScan.name || liveHeaderScan.hp ? (
+                    <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-slate-950/95 border border-cyan-400 text-cyan-300 font-black text-[11px] sm:text-xs shadow-xl animate-in zoom-in-95">
+                      <span className="text-amber-400 text-xs">🎯</span>
+                      {liveHeaderScan.stage && (
+                        <span className="text-[8.5px] px-1 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                          {liveHeaderScan.stage}
+                        </span>
+                      )}
+                      <span className="truncate max-w-[110px] sm:max-w-[150px]">{liveHeaderScan.name || 'Pokémon'}</span>
+                      {liveHeaderScan.hp && (
+                        <span className="px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-200 border border-cyan-500/50 text-[10px] font-mono">
+                          {liveHeaderScan.hp}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 text-[8.5px] sm:text-[9.5px] text-blue-200/90 font-medium bg-slate-950/70 px-2 py-0.5 rounded-md">
+                      <span className="animate-pulse">🔍 Analyse active du Nom en haut...</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Blue Laser Ray Animation */}
+                <div className="absolute inset-x-1 h-[2px] bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_8px_#38bdf8] animate-pulse opacity-80" />
+              </div>
+
+              {/* Illustration & Attack Zone Spacer */}
+              <div className="w-full flex-1 flex flex-col items-center justify-center border border-dashed border-slate-700/30 rounded-xl my-1.5 bg-slate-950/15">
+                <span className="text-[8.5px] sm:text-[9px] text-slate-500 font-semibold tracking-wider uppercase">
+                  Illustration & Attaques
+                </span>
+              </div>
+
+              {/* Scanning Beam (Support 3D) */}
+              {batchStatus === 'running' && (
+                <div className="absolute inset-x-2 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_#10b981] animate-scan" />
+              )}
+
+              {/* Status Footer Guide */}
+              <div className="w-full flex items-center justify-center">
+                {scanMode === 'batch3d' && batchStatus === 'running' ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 animate-pulse">
+                    {motionIndicator === 'chute' ? '⚡ Chute détectée...' : motionIndicator === 'analyse' ? '🔍 Stabilisation & Scan...' : '✨ En attente de la carte suivante...'}
+                  </span>
+                ) : (
+                  <span className="text-[9px] sm:text-[9.5px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 text-slate-400 border border-slate-700">
+                    Gardez la carte droite dans le cadre
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Top Video Controls Overlay (Flash, Flip) */}
         {hasCamera && (

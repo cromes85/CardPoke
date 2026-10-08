@@ -18,7 +18,10 @@ import {
   Loader2,
   Copy,
   Check,
-  Zap
+  Zap,
+  ZoomIn,
+  Search,
+  ExternalLink
 } from 'lucide-react';
 import {
   autoDetectCardEdges,
@@ -27,6 +30,7 @@ import {
   POKEMON_RATIO
 } from '../utils/cardEdgeDetector';
 import { recognizeCardInfo } from '../utils/cardTextRecognizer';
+import { searchPokemonCard, getCardDetails } from '../utils/pokemonCardMatcher';
 
 // Coordonnées d'usine étalonnées pour la Tour 3D
 const STAND_3D_CORNERS = [
@@ -59,11 +63,19 @@ export default function BorderDetectionCamera() {
   const [showLightingPanel, setShowLightingPanel] = useState(false);
   const [autoEnhance, setAutoEnhance] = useState(true);
 
-  // États OCR Automatique (Nom, PV, Numéro de Carte)
+  // Zoom Optique & Matériel
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [hasHardwareZoom, setHasHardwareZoom] = useState(false);
+  const [zoomCaps, setZoomCaps] = useState({ min: 1, max: 4, step: 0.1 });
+
+  // États OCR Automatique & Base Pokémon
   const [detectedName, setDetectedName] = useState('');
   const [detectedHP, setDetectedHP] = useState('');
   const [detectedNumber, setDetectedNumber] = useState('');
   const [isReadingOCR, setIsReadingOCR] = useState(false);
+  const [isSearchingAPI, setIsSearchingAPI] = useState(false);
+  const [candidateCards, setCandidateCards] = useState([]);
+  const [selectedCardDetails, setSelectedCardDetails] = useState(null);
   const [headerCropPreview, setHeaderCropPreview] = useState(null);
   const [footerCropPreview, setFooterCropPreview] = useState(null);
   const [isCopied, setIsCopied] = useState(false);
@@ -142,6 +154,14 @@ export default function BorderDetectionCamera() {
       const track = stream.getVideoTracks()[0];
       const capabilities = track?.getCapabilities ? track.getCapabilities() : {};
       setHasTorch(!!capabilities.torch);
+      if (capabilities.zoom) {
+        setHasHardwareZoom(true);
+        setZoomCaps({
+          min: capabilities.zoom.min || 1,
+          max: capabilities.zoom.max || 5,
+          step: capabilities.zoom.step || 0.1
+        });
+      }
 
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoInputs = devices.filter(d => d.kind === 'videoinput');
@@ -315,29 +335,111 @@ export default function BorderDetectionCamera() {
     localStorage.setItem('card_lighting_contrast', c.toString());
   };
 
-  // Lecture OCR Automatique Complète (Nom, PV, Numéro de Carte)
+  // Gestionnaire de Zoom Matériel
+  const handleZoomChange = async (val) => {
+    const num = parseFloat(val);
+    setZoomLevel(num);
+    if (streamRef.current) {
+      const track = streamRef.current.getVideoTracks()[0];
+      if (track && track.getCapabilities?.().zoom) {
+        try {
+          await track.applyConstraints({ advanced: [{ zoom: num }] });
+        } catch (e) {
+          console.warn('Erreur réglage zoom:', e);
+        }
+      }
+    }
+  };
+
+  // Lecture OCR Automatique Complète (Nom, PV, Numéro de Carte) + Requête TCGdex
   const readAllCardInfo = async (canvas) => {
     if (!canvas) return;
     setIsReadingOCR(true);
+    setIsSearchingAPI(true);
+    setCandidateCards([]);
+    setSelectedCardDetails(null);
     setDetectedName('');
     setDetectedHP('');
     setDetectedNumber('');
+
     try {
+      // 1. OCR multi-zones
       const res = await recognizeCardInfo(canvas);
       if (res.name) setDetectedName(res.name);
       if (res.hp) setDetectedHP(res.hp);
       if (res.number) setDetectedNumber(res.number);
       if (res.headerPreview) setHeaderCropPreview(res.headerPreview);
       if (res.footerPreview) setFooterCropPreview(res.footerPreview);
+      setIsReadingOCR(false);
+
+      // 2. Recherche Base de données Pokémon TCGdex
+      const searchName = res.name;
+      if (searchName && searchName.trim().length >= 2) {
+        const matches = await searchPokemonCard(searchName, res.hp, res.number);
+        setCandidateCards(matches || []);
+
+        if (matches && matches.length > 0) {
+          const topMatch = matches[0];
+          const details = await getCardDetails(topMatch.id);
+          if (details) {
+            setSelectedCardDetails(details);
+            // Si le numéro lu par OCR était vide, utiliser le numéro vérifié de l'API
+            if (!res.number || res.number.length < 3) {
+              setDetectedNumber(details.number);
+            }
+          }
+        }
+      }
     } catch (err) {
-      console.warn('Erreur OCR Complète:', err);
+      console.warn('Erreur OCR / TCGdex:', err);
     } finally {
       setIsReadingOCR(false);
+      setIsSearchingAPI(false);
+    }
+  };
+
+  const handleSelectCandidate = async (candidate) => {
+    setIsSearchingAPI(true);
+    try {
+      const details = await getCardDetails(candidate.id);
+      if (details) {
+        setSelectedCardDetails(details);
+        setDetectedNumber(details.number);
+        if (details.name) setDetectedName(details.name);
+        if (details.hp) setDetectedHP(details.hp);
+      }
+    } catch (err) {
+      console.warn('Erreur sélection candidat:', err);
+    } finally {
+      setIsSearchingAPI(false);
+    }
+  };
+
+  const handleManualSearch = async () => {
+    if (!detectedName || detectedName.trim().length < 2) return;
+    setIsSearchingAPI(true);
+    try {
+      const matches = await searchPokemonCard(detectedName.trim(), detectedHP, detectedNumber);
+      setCandidateCards(matches || []);
+      if (matches && matches.length > 0) {
+        const details = await getCardDetails(matches[0].id);
+        if (details) {
+          setSelectedCardDetails(details);
+          if (!detectedNumber) {
+            setDetectedNumber(details.number);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Erreur recherche manuelle:', err);
+    } finally {
+      setIsSearchingAPI(false);
     }
   };
 
   const handleCopyCardInfo = () => {
-    const summary = `${detectedName || 'Pokémon'} ${detectedHP ? `(${detectedHP})` : ''} - N° ${detectedNumber || 'Non renseigné'}`.trim();
+    const setInfo = selectedCardDetails?.setName ? ` [${selectedCardDetails.setName}]` : '';
+    const summary = `${detectedName || 'Pokémon'} ${detectedHP ? `(${detectedHP})` : ''} - N° ${detectedNumber || 'Non renseigné'}${setInfo}`.trim();
     navigator.clipboard?.writeText(summary);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
@@ -396,7 +498,7 @@ export default function BorderDetectionCamera() {
     if (warped) {
       lastWarpedCanvasRef.current = warped;
       setCapturedWarpedImage(warped.toDataURL('image/jpeg', 0.95));
-      // Lancement immédiat de la reconnaissance OCR (Nom, PV, Numéro)
+      // Lancement immédiat de la reconnaissance OCR + Recherche TCGdex
       readAllCardInfo(warped);
     }
   };
@@ -584,6 +686,53 @@ export default function BorderDetectionCamera() {
               className="flex-1 accent-indigo-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
             />
           </div>
+
+          {/* Contrôles de Zoom Optique & Matériel */}
+          {hasHardwareZoom && (
+            <div className="pt-2 border-t border-slate-800 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+                  <ZoomIn className="w-3.5 h-3.5" />
+                  Zoom Capteur / Optique
+                </span>
+                <span className="text-[11px] font-mono text-emerald-300 font-bold">
+                  {zoomLevel.toFixed(1)}x
+                </span>
+              </div>
+
+              <div className="grid grid-cols-4 gap-1.5 text-[10px] font-medium">
+                {[1.0, 1.5, 2.0, 2.5].map((z) => (
+                  <button
+                    key={z}
+                    onClick={() => handleZoomChange(z)}
+                    className={`py-1 rounded-lg border transition font-mono ${
+                      Math.abs(zoomLevel - z) < 0.1
+                        ? 'bg-emerald-500 text-black font-bold border-emerald-400 shadow'
+                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    }`}
+                  >
+                    {z.toFixed(1)}x
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-slate-300 w-24 flex items-center gap-1 font-mono">
+                  <ZoomIn className="w-3.5 h-3.5 text-emerald-400" />
+                  {zoomLevel.toFixed(1)}x
+                </span>
+                <input
+                  type="range"
+                  min={zoomCaps.min || 1}
+                  max={Math.min(zoomCaps.max || 5, 4)}
+                  step={zoomCaps.step || 0.1}
+                  value={zoomLevel}
+                  onChange={(e) => handleZoomChange(e.target.value)}
+                  className="flex-1 accent-emerald-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+                />
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -729,10 +878,12 @@ export default function BorderDetectionCamera() {
         )}
       </footer>
 
-      {/* 4. Modal de Contrôle de l'Extraction Redressée */}
+      {/* 4. Modal de Contrôle de l'Extraction Redressée & Identification */}
       {capturedWarpedImage && (
-        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-4">
-          <div className="max-w-xs w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl flex flex-col items-center space-y-3.5">
+        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-3 overflow-y-auto">
+          <div className="max-w-sm w-full bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-2xl flex flex-col items-center space-y-3 my-auto max-h-[96vh] overflow-y-auto">
+            
+            {/* Titre & Résolution */}
             <div className="flex items-center justify-between w-full">
               <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -743,16 +894,17 @@ export default function BorderDetectionCamera() {
               </span>
             </div>
 
-            <div className="w-full aspect-[63/88] rounded-xl overflow-hidden border-2 border-emerald-500 shadow-2xl bg-slate-950 flex items-center justify-center">
+            {/* Aperçu Carte Rectangulaire 63:88 */}
+            <div className="w-full max-h-44 aspect-[63/88] rounded-xl overflow-hidden border-2 border-emerald-500 shadow-2xl bg-slate-950 flex items-center justify-center">
               <img
                 src={capturedWarpedImage}
                 alt="Carte extraite HD"
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
               />
             </div>
 
             {/* 1. Boîtier Nom & PV (En-Tête) */}
-            <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border border-slate-800 flex flex-col gap-2 shadow-inner">
+            <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border border-slate-800 flex flex-col gap-1.5 shadow-inner">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
                   <Zap className="w-3.5 h-3.5 text-amber-400" />
@@ -760,7 +912,7 @@ export default function BorderDetectionCamera() {
                 </span>
                 {isReadingOCR ? (
                   <span className="text-[10px] text-amber-400 flex items-center gap-1 font-mono animate-pulse">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Lecture...
+                    <Loader2 className="w-3 h-3 animate-spin" /> Lecture OCR...
                   </span>
                 ) : detectedName ? (
                   <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
@@ -786,7 +938,7 @@ export default function BorderDetectionCamera() {
                     type="text"
                     value={detectedName}
                     onChange={(e) => setDetectedName(e.target.value)}
-                    placeholder={isReadingOCR ? "Recherche nom..." : "Nom Pokémon (ex: Fantominus)"}
+                    placeholder={isReadingOCR ? "Lecture..." : "Nom Pokémon"}
                     className="flex-1 bg-slate-900 border border-slate-700 focus:border-amber-500 rounded-lg px-2 py-1 text-xs font-bold text-white focus:outline-none placeholder-slate-600 transition"
                   />
                   <input
@@ -796,12 +948,20 @@ export default function BorderDetectionCamera() {
                     placeholder="PV"
                     className="w-16 bg-slate-900 border border-slate-700 focus:border-amber-500 rounded-lg px-1.5 py-1 text-xs font-mono font-bold text-amber-300 focus:outline-none placeholder-slate-600 text-center transition"
                   />
+                  <button
+                    onClick={handleManualSearch}
+                    disabled={isSearchingAPI}
+                    title="Rechercher dans la base Pokémon"
+                    className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95"
+                  >
+                    <Search className="w-3.5 h-3.5 text-amber-400" />
+                  </button>
                 </div>
               </div>
             </div>
 
-            {/* 2. Boîtier Numéro de Carte (Bas de Carte) */}
-            <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border border-slate-800 flex flex-col gap-2 shadow-inner">
+            {/* 2. Boîtier Numéro de Carte avec Loupe Agrandie */}
+            <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border border-slate-800 flex flex-col gap-1.5 shadow-inner">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
                   <Hash className="w-3.5 h-3.5 text-emerald-400" />
@@ -809,7 +969,7 @@ export default function BorderDetectionCamera() {
                 </span>
                 {detectedNumber ? (
                   <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
-                    <CheckCircle2 className="w-3 h-3" /> N° trouvé
+                    <CheckCircle2 className="w-3 h-3" /> N° Résolu
                   </span>
                 ) : !isReadingOCR ? (
                   <span className="text-[10px] text-slate-500 font-mono">
@@ -820,13 +980,14 @@ export default function BorderDetectionCamera() {
 
               <div className="flex items-center gap-2">
                 {footerCropPreview && (
-                  <div className="w-20 h-7 rounded border border-slate-700 overflow-hidden bg-black flex-shrink-0 flex items-center justify-center shadow">
+                  <div className="w-24 h-8 rounded border border-emerald-500/60 overflow-hidden bg-black flex-shrink-0 flex items-center justify-center shadow-lg relative group">
                     <img
                       src={footerCropPreview}
-                      alt="Zoom N°"
-                      className="w-full h-full object-cover"
-                      title="Zone numéro bas de carte"
+                      alt="Loupe Zoom N°"
+                      className="w-full h-full object-cover transform scale-110"
+                      title="Loupe haute définition zone numéro"
                     />
+                    <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none"></div>
                   </div>
                 )}
 
@@ -849,18 +1010,55 @@ export default function BorderDetectionCamera() {
 
                   <button
                     onClick={() => readAllCardInfo(lastWarpedCanvasRef.current)}
-                    disabled={isReadingOCR}
-                    title="Relancer l'analyse OCR"
+                    disabled={isReadingOCR || isSearchingAPI}
+                    title="Relancer l'analyse OCR et API"
                     className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95 disabled:opacity-50"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isReadingOCR ? 'animate-spin text-amber-400' : ''}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 ${isReadingOCR || isSearchingAPI ? 'animate-spin text-amber-400' : ''}`} />
                   </button>
                 </div>
               </div>
             </div>
 
+            {/* 3. Informations Extension & Versions Officielles (TCGdex) */}
+            {selectedCardDetails && (
+              <div className="w-full bg-slate-950/80 rounded-xl p-2.5 border border-indigo-500/30 flex flex-col gap-1.5 shadow-inner">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-semibold text-indigo-300 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                    {selectedCardDetails.setName}
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-950 border border-indigo-800 text-indigo-300 font-bold">
+                    {selectedCardDetails.rarity}
+                  </span>
+                </div>
+
+                {/* Variantes / Séries Disponibles */}
+                {candidateCards.length > 1 && (
+                  <div className="flex flex-col gap-1 pt-1">
+                    <span className="text-[9px] text-slate-400 font-medium">Autres extensions trouvées :</span>
+                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                      {candidateCards.slice(0, 4).map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => handleSelectCandidate(c)}
+                          className={`text-[9px] px-2 py-0.5 rounded-lg border font-mono transition ${
+                            selectedCardDetails.id === c.id
+                              ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow'
+                              : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800'
+                          }`}
+                        >
+                          N° {c.localId}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Sélecteur de Rendu : Amélioration Auto HD vs Brut */}
-            <div className="w-full flex items-center gap-2">
+            <div className="w-full flex items-center gap-2 pt-1">
               <button
                 onClick={() => {
                   const nextState = !autoEnhance;

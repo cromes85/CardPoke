@@ -51,16 +51,22 @@ export default function Scanner({
   const [torchOn, setTorchOn] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
 
-  // Optical & Digital Zoom Engine for 3D Tower & Distance Calibration
+  // Optical & Digital Zoom Engine for 3D Tower & Distance Calibration (2D Viewport Pan & Zoom)
   const [zoom, setZoom] = useState(() => {
     const saved = localStorage.getItem('pokescan_zoom_3d');
-    return saved ? parseFloat(saved) : 2.3;
+    return saved ? parseFloat(saved) : 2.2;
+  });
+  const [offsetX, setOffsetX] = useState(() => {
+    const saved = localStorage.getItem('pokescan_offset_x_3d');
+    return saved ? parseFloat(saved) : 0.12;
   });
   const [offsetY, setOffsetY] = useState(() => {
-    const saved = localStorage.getItem('pokescan_offset_3d');
-    return saved ? parseFloat(saved) : 0.06;
+    const saved = localStorage.getItem('pokescan_offset_y_3d');
+    return saved ? parseFloat(saved) : -0.06;
   });
   const [showZoomPanel, setShowZoomPanel] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef(null);
   const [hwZoomSupported, setHwZoomSupported] = useState(false);
   const [hwZoomRange, setHwZoomRange] = useState({ min: 1, max: 5, step: 0.1 });
 
@@ -101,61 +107,110 @@ export default function Scanner({
   const lastCaptureTimeRef = useRef(0);
   const batchQueueRef = useRef([]);
 
-  // Compute Zoomed ROI in Video Coordinate System
-  const getZoomedCropDimensions = useCallback((vw, vh, z, offY) => {
+  // Compute Zoomed ROI in Video Coordinate System with 2D Offsets
+  const getZoomedCropDimensions = useCallback((vw, vh, z, offX, offY) => {
     const zoomVal = Math.max(1.0, z || 1.0);
     const cropW = Math.floor(vw / zoomVal);
     const cropH = Math.floor(vh / zoomVal);
-    const centerX = Math.max(0, Math.min(vw - cropW, Math.floor((vw - cropW) / 2)));
-    const rawCenterY = Math.floor((vh - cropH) / 2 + (vh * (offY || 0)));
-    const cropY = Math.max(0, Math.min(vh - cropH, rawCenterY));
-    return { cropX: centerX, cropY: centerY, cropW, cropH };
+
+    // Coordinate mapping: Positive offX shifts video right in CSS, so crop moves left in raw video
+    const centerX = (vw / 2) - (vw * (offX || 0));
+    const centerY = (vh / 2) - (vh * (offY || 0));
+
+    const cropX = Math.max(0, Math.min(vw - cropW, Math.floor(centerX - cropW / 2)));
+    const cropY = Math.max(0, Math.min(vh - cropH, Math.floor(centerY - cropH / 2)));
+
+    return { cropX, cropY, cropW, cropH };
   }, []);
 
-  // Set Zoom Level and persist per mode
-  const handleSetZoom = useCallback(async (newZoom, newOffsetY = null) => {
-    const targetZoom = Math.max(1.0, Math.min(4.0, Number(newZoom)));
-    const targetOffsetY = newOffsetY !== null ? Number(newOffsetY) : offsetY;
+  // Set Zoom and 2D Calibration Level and persist per mode
+  const handleSetCalibration = useCallback((newZoom, newOffX = null, newOffY = null) => {
+    const targetZoom = Math.max(1.0, Math.min(4.5, Number(newZoom)));
+    const targetOffX = newOffX !== null ? Math.max(-0.4, Math.min(0.4, Number(newOffX))) : offsetX;
+    const targetOffY = newOffY !== null ? Math.max(-0.4, Math.min(0.4, Number(newOffY))) : offsetY;
     
     setZoom(targetZoom);
-    if (newOffsetY !== null) {
-      setOffsetY(targetOffsetY);
-    }
+    if (newOffX !== null) setOffsetX(targetOffX);
+    if (newOffY !== null) setOffsetY(targetOffY);
 
     if (scanMode === 'batch3d') {
       localStorage.setItem('pokescan_zoom_3d', String(targetZoom));
-      if (newOffsetY !== null) localStorage.setItem('pokescan_offset_3d', String(targetOffsetY));
+      if (newOffX !== null) localStorage.setItem('pokescan_offset_x_3d', String(targetOffX));
+      if (newOffY !== null) localStorage.setItem('pokescan_offset_y_3d', String(targetOffY));
     } else {
       localStorage.setItem('pokescan_zoom_normal', String(targetZoom));
-      if (newOffsetY !== null) localStorage.setItem('pokescan_offset_normal', String(targetOffsetY));
+      if (newOffX !== null) localStorage.setItem('pokescan_offset_x_normal', String(targetOffX));
+      if (newOffY !== null) localStorage.setItem('pokescan_offset_y_normal', String(targetOffY));
     }
+  }, [offsetX, offsetY, scanMode]);
 
-    // Try applying native hardware zoom if available
-    if (videoRef.current && videoRef.current.srcObject) {
-      const track = videoRef.current.srcObject.getVideoTracks()[0];
-      if (track) {
-        const caps = track.getCapabilities ? track.getCapabilities() : {};
-        if (caps.zoom) {
-          try {
-            const clamped = Math.max(caps.zoom.min || 1, Math.min(caps.zoom.max || 5, targetZoom));
-            await track.applyConstraints({ advanced: [{ zoom: clamped }] });
-          } catch (e) {}
-        }
-      }
+  // Handle Nudge via D-Pad Buttons
+  const handleNudgeOffset = (dx, dy) => {
+    const nextX = Math.max(-0.4, Math.min(0.4, offsetX + dx * 0.02));
+    const nextY = Math.max(-0.4, Math.min(0.4, offsetY + dy * 0.02));
+    handleSetCalibration(zoom, nextX, nextY);
+  };
+
+  const handleNudgeZoom = (dZoom) => {
+    const nextZ = Math.max(1.0, Math.min(4.5, zoom + dZoom));
+    handleSetCalibration(nextZ, offsetX, offsetY);
+  };
+
+  // Touch and Drag-to-Position (Pan) Handlers
+  const handlePointerDown = (e) => {
+    if (e.target.closest('button') || e.target.closest('input')) return;
+    panStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      initX: offsetX,
+      initY: offsetY
+    };
+    setIsPanning(true);
+    try {
+      e.target.setPointerCapture(e.pointerId);
+    } catch (err) {}
+  };
+
+  const handlePointerMove = (e) => {
+    if (!isPanning || !panStartRef.current) return;
+    const dx = e.clientX - panStartRef.current.startX;
+    const dy = e.clientY - panStartRef.current.startY;
+
+    const container = e.currentTarget.getBoundingClientRect();
+    const deltaX = (dx / container.width) * (1 / zoom) * 1.5;
+    const deltaY = (dy / container.height) * (1 / zoom) * 1.5;
+
+    const newX = Math.max(-0.4, Math.min(0.4, panStartRef.current.initX + deltaX));
+    const newY = Math.max(-0.4, Math.min(0.4, panStartRef.current.initY + deltaY));
+
+    setOffsetX(newX);
+    setOffsetY(newY);
+  };
+
+  const handlePointerUp = (e) => {
+    if (isPanning) {
+      setIsPanning(false);
+      try {
+        e.target.releasePointerCapture(e.pointerId);
+      } catch (err) {}
+      handleSetCalibration(zoom, offsetX, offsetY);
     }
-  }, [offsetY, scanMode]);
+    panStartRef.current = null;
+  };
 
   // Handle Mode Change and Restore Corresponding Zoom Preset
   const handleModeChange = (mode) => {
     setScanMode(mode);
     if (mode === 'batch3d') {
-      const saved3D = parseFloat(localStorage.getItem('pokescan_zoom_3d')) || 2.3;
-      const savedOffset3D = parseFloat(localStorage.getItem('pokescan_offset_3d')) || 0.06;
-      handleSetZoom(saved3D, savedOffset3D);
+      const saved3D = parseFloat(localStorage.getItem('pokescan_zoom_3d')) || 2.2;
+      const savedOffX = parseFloat(localStorage.getItem('pokescan_offset_x_3d')) || 0.12;
+      const savedOffY = parseFloat(localStorage.getItem('pokescan_offset_y_3d')) || -0.06;
+      handleSetCalibration(saved3D, savedOffX, savedOffY);
     } else {
       const savedNorm = parseFloat(localStorage.getItem('pokescan_zoom_normal')) || 1.0;
-      const savedOffsetNorm = parseFloat(localStorage.getItem('pokescan_offset_normal')) || 0.0;
-      handleSetZoom(savedNorm, savedOffsetNorm);
+      const savedOffX = parseFloat(localStorage.getItem('pokescan_offset_x_normal')) || 0.0;
+      const savedOffY = parseFloat(localStorage.getItem('pokescan_offset_y_normal')) || 0.0;
+      handleSetCalibration(savedNorm, savedOffX, savedOffY);
     }
   };
 
@@ -204,8 +259,6 @@ export default function Scanner({
             max: capabilities.zoom.max || 5,
             step: capabilities.zoom.step || 0.1
           });
-          const initialZoom = scanMode === 'batch3d' ? (parseFloat(localStorage.getItem('pokescan_zoom_3d')) || 2.3) : 1.0;
-          adv.zoom = Math.max(capabilities.zoom.min || 1, Math.min(capabilities.zoom.max || 5, initialZoom));
         }
         if (Object.keys(adv).length > 0) {
           await track.applyConstraints({ advanced: [adv] });
@@ -219,7 +272,7 @@ export default function Scanner({
       setHasCamera(false);
       setCameraError(err.message || "Impossible d'accéder à la caméra. Vérifiez les autorisations.");
     }
-  }, [facingMode, scanMode]);
+  }, [facingMode]);
 
   // Toggle Torch
   const toggleTorch = async () => {
@@ -295,7 +348,7 @@ export default function Scanner({
       const vh = video.videoHeight || 720;
 
       // Calculate Zoomed ROI (matching the framed card directly)
-      const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetY);
+      const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
 
       // In the zoomed card frame, extract the top 22% (where Name and HP/PV are printed)
       const headerW = Math.min(vw - cropX - 5, Math.floor(cropW * 0.94));
@@ -335,7 +388,7 @@ export default function Scanner({
     }, 1400);
 
     return () => clearInterval(interval);
-  }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus, zoom, offsetY, getZoomedCropDimensions]);
+  }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus, zoom, offsetX, offsetY, getZoomedCropDimensions]);
 
   // Single Frame Capture (for Button & Auto Modes) with Zoomed ROI & Auto-Lighting Equalizer
   const captureFrame = useCallback(() => {
@@ -345,7 +398,7 @@ export default function Scanner({
     const video = videoRef.current;
     const vw = video.videoWidth || 1280;
     const vh = video.videoHeight || 720;
-    const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetY);
+    const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
 
     const canvas = document.createElement('canvas');
     canvas.width = cropW;
@@ -361,7 +414,7 @@ export default function Scanner({
       sourceCanvas: enhancedCanvas,
       detectedCorners: corners
     });
-  }, [isProcessing, onCardCaptured, zoom, offsetY, getZoomedCropDimensions]);
+  }, [isProcessing, onCardCaptured, zoom, offsetX, offsetY, getZoomedCropDimensions]);
 
   // Handle Standard Auto-Scan Mode Countdown
   useEffect(() => {
@@ -476,7 +529,7 @@ export default function Scanner({
       const video = videoRef.current;
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
-      const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetY);
+      const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
 
       // Sample central 50% of the zoomed card drop zone
       const sampleCropX = cropX + Math.floor(cropW * 0.25);
@@ -547,7 +600,7 @@ export default function Scanner({
 
     animId = requestAnimationFrame(checkMotionLoop);
     return () => cancelAnimationFrame(animId);
-  }, [scanMode, batchStatus, hasCamera, isProcessingQueue, processBatchQueue, zoom, offsetY, getZoomedCropDimensions]);
+  }, [scanMode, batchStatus, hasCamera, isProcessingQueue, processBatchQueue, zoom, offsetX, offsetY, getZoomedCropDimensions]);
 
   // Start Batch Session
   const handleStartBatch = () => {
@@ -619,8 +672,8 @@ export default function Scanner({
           >
             <Layers className="w-3.5 h-3.5" />
             <span>Support 3D</span>
-            <span className="text-[8px] sm:text-[9px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-400/40">
-              Auto-Zoom
+            <span className="text-[8px] sm:text-[9px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-400/40 font-bold">
+              Auto-Centré
             </span>
           </button>
 
@@ -668,20 +721,27 @@ export default function Scanner({
       {/* Main Viewfinder Box */}
       <div className="relative w-full aspect-[3/4] sm:aspect-[4/3] md:aspect-[16/10] max-h-[58vh] rounded-3xl overflow-hidden bg-slate-950 border-2 border-slate-800 shadow-2xl flex items-center justify-center group">
         
-        {/* Camera Stream with Digital & Optical Zoom Viewport Transform */}
+        {/* Camera Stream with 2D Drag-to-Position Pan & Zoom */}
         {hasCamera && !cameraError ? (
-          <div className="w-full h-full overflow-hidden relative flex items-center justify-center">
+          <div 
+            className="w-full h-full overflow-hidden relative flex items-center justify-center cursor-move select-none touch-none"
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            title="Glissez avec le doigt pour centrer la carte dans le cadre"
+          >
             <video
               ref={videoRef}
               playsInline
               muted
               autoPlay
               style={{
-                transform: `scale(${zoom}) translateY(${offsetY * 100}%)`,
+                transform: `scale(${zoom}) translate(${offsetX * 100}%, ${offsetY * 100}%)`,
                 transformOrigin: 'center center',
-                transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
+                transition: isPanning ? 'none' : 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
               }}
-              className="w-full h-full object-cover will-change-transform"
+              className="w-full h-full object-cover pointer-events-none will-change-transform"
             />
           </div>
         ) : (
@@ -701,9 +761,7 @@ export default function Scanner({
 
         {/* Real-time Ambient Lighting Status Badge */}
         {hasCamera && !cameraError && (
-          <div className={`absolute z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-lg text-[10px] sm:text-[11px] font-bold transition-all ${
-            scanMode === 'batch3d' && lastScannedCard ? 'bottom-3 left-3' : 'top-3 left-3'
-          }`}>
+          <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-lg text-[10px] sm:text-[11px] font-bold transition-all">
             <span 
               className="w-2 h-2 rounded-full animate-pulse shrink-0" 
               style={{ backgroundColor: lightingInfo.color || '#10b981' }} 
@@ -723,19 +781,26 @@ export default function Scanner({
           </div>
         )}
 
+        {/* Interactive Touch Drag Tip */}
+        {hasCamera && !cameraError && scanMode === 'batch3d' && (
+          <div className="absolute top-3 right-14 z-20 flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/30 text-amber-300 text-[9.5px] font-bold backdrop-blur-md pointer-events-none">
+            <span>👆 Glissez pour centrer</span>
+          </div>
+        )}
+
         {/* Floating Quick Zoom Toolbar on Viewfinder */}
         {hasCamera && !cameraError && (
           <div className="absolute bottom-3 right-3 sm:right-4 z-30 flex items-center gap-1 bg-slate-950/90 backdrop-blur-md p-1 sm:p-1.5 rounded-2xl border border-slate-700/80 shadow-2xl">
             {[
-              { label: '1x', val: 1.0, off: 0.0 },
-              { label: '1.5x', val: 1.5, off: 0.03 },
-              { label: '2x', val: 2.0, off: 0.05 },
-              { label: '2.3x 🎯 3D', val: 2.3, off: 0.06 },
-              { label: '3x', val: 3.0, off: 0.07 }
+              { label: '1x', val: 1.0, ox: 0.0, oy: 0.0 },
+              { label: '1.5x', val: 1.5, ox: 0.06, oy: -0.03 },
+              { label: '2x', val: 2.0, ox: 0.10, oy: -0.05 },
+              { label: '2.2x 🎯 3D', val: 2.2, ox: 0.12, oy: -0.06 },
+              { label: '2.8x', val: 2.8, ox: 0.14, oy: -0.07 }
             ].map(preset => (
               <button
                 key={preset.val}
-                onClick={() => handleSetZoom(preset.val, preset.off)}
+                onClick={() => handleSetCalibration(preset.val, preset.ox, preset.oy)}
                 className={`px-2 py-1 rounded-xl text-[10px] sm:text-xs font-black transition-all ${
                   Math.abs(zoom - preset.val) < 0.12
                     ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-md shadow-red-600/40 scale-105'
@@ -748,7 +813,7 @@ export default function Scanner({
 
             <button
               onClick={() => setShowZoomPanel(!showZoomPanel)}
-              title="Ajuster le zoom et le centrage vertical au millimètre"
+              title="Ajuster le cadrage au millimètre (D-pad & curseurs)"
               className={`p-1.5 rounded-xl border transition-colors ${
                 showZoomPanel
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow'
@@ -760,68 +825,98 @@ export default function Scanner({
           </div>
         )}
 
-        {/* Granular Zoom & Vertical Centering Fine-Tuning Drawer */}
+        {/* Granular Zoom & 2D Centering Fine-Tuning Drawer */}
         {showZoomPanel && (
-          <div className="absolute top-14 inset-x-3 sm:inset-x-8 z-40 p-3.5 rounded-2xl bg-slate-900/95 backdrop-blur-md border border-slate-700 shadow-2xl space-y-3 animate-in fade-in zoom-in-95">
+          <div className="absolute top-12 inset-x-2 sm:inset-x-6 z-40 p-3.5 rounded-2xl bg-slate-900/95 backdrop-blur-md border border-slate-700 shadow-2xl space-y-3 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between">
               <span className="text-xs font-black text-white flex items-center gap-1.5">
                 <Sliders className="w-3.5 h-3.5 text-amber-400" />
-                <span>Calibrage Zoom & Centrage (Tour 3D / Support)</span>
+                <span>Calibrage Chirurgical Viseur & Tour 3D</span>
               </span>
               <button
                 onClick={() => setShowZoomPanel(false)}
-                className="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800"
+                className="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800 font-bold"
               >
                 Fermer
               </button>
             </div>
 
-            {/* Zoom Slider */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-slate-400 font-semibold">Grossissement (Zoom) :</span>
-                <span className="text-amber-400 font-mono font-black">{zoom.toFixed(1)}x</span>
+            {/* D-Pad 2D Directional Nudge + Zoom Controls */}
+            <div className="grid grid-cols-2 gap-3 items-center bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
+              
+              {/* D-Pad Arrows */}
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-[10px] text-slate-400 font-semibold mb-0.5">Recadrage Manuel (D-Pad)</span>
+                <button
+                  onClick={() => handleNudgeOffset(0, 1)}
+                  className="w-8 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center text-xs active:scale-95 shadow"
+                >
+                  ▲
+                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleNudgeOffset(1, 0)}
+                    className="w-8 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center text-xs active:scale-95 shadow"
+                  >
+                    ◀
+                  </button>
+                  <button
+                    onClick={() => handleSetCalibration(zoom, 0.12, -0.06)}
+                    title="Centrer par défaut pour support 3D"
+                    className="w-8 h-7 rounded-lg bg-red-600/30 text-red-300 font-bold flex items-center justify-center text-[10px] active:scale-95 border border-red-500/40"
+                  >
+                    🎯
+                  </button>
+                  <button
+                    onClick={() => handleNudgeOffset(-1, 0)}
+                    className="w-8 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center text-xs active:scale-95 shadow"
+                  >
+                    ▶
+                  </button>
+                </div>
+                <button
+                  onClick={() => handleNudgeOffset(0, -1)}
+                  className="w-8 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center text-xs active:scale-95 shadow"
+                >
+                  ▼
+                </button>
               </div>
-              <input
-                type="range"
-                min="1.0"
-                max="3.5"
-                step="0.1"
-                value={zoom}
-                onChange={(e) => handleSetZoom(parseFloat(e.target.value))}
-                className="w-full accent-red-500 cursor-pointer"
-              />
-            </div>
 
-            {/* Vertical Centering Offset Slider */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-slate-400 font-semibold">Centrage Vertical (Hauteur) :</span>
-                <span className="text-cyan-400 font-mono font-bold">
-                  {offsetY > 0 ? `+${Math.round(offsetY * 100)}%` : `${Math.round(offsetY * 100)}%`}
+              {/* Zoom In / Out Buttons & Coordinate Display */}
+              <div className="flex flex-col items-center justify-center gap-2">
+                <span className="text-[10px] text-slate-400 font-semibold">Grossissement</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleNudgeZoom(-0.1)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-black text-sm active:scale-95 shadow border border-slate-700"
+                  >
+                    -
+                  </button>
+                  <span className="text-amber-400 font-mono font-black text-sm">{zoom.toFixed(1)}x</span>
+                  <button
+                    onClick={() => handleNudgeZoom(+0.1)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-black text-sm active:scale-95 shadow border border-slate-700"
+                  >
+                    +
+                  </button>
+                </div>
+                <span className="text-[9px] text-slate-500 font-mono">
+                  Décalage : X:{Math.round(offsetX * 100)}% Y:{Math.round(offsetY * 100)}%
                 </span>
               </div>
-              <input
-                type="range"
-                min="-0.15"
-                max="0.18"
-                step="0.01"
-                value={offsetY}
-                onChange={(e) => handleSetZoom(zoom, parseFloat(e.target.value))}
-                className="w-full accent-cyan-500 cursor-pointer"
-              />
+
             </div>
 
             {/* 1-Click Calibration Shortcuts */}
-            <div className="flex items-center gap-2 pt-1 border-t border-slate-800">
+            <div className="flex items-center gap-2 pt-1">
               <button
-                onClick={() => handleSetZoom(2.3, 0.06)}
+                onClick={() => handleSetCalibration(2.2, 0.12, -0.06)}
                 className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold text-center transition-colors"
               >
-                🎯 Calibrer Tour 3D (2.3x)
+                🎯 Tour 3D Préréglée (2.2x)
               </button>
               <button
-                onClick={() => handleSetZoom(1.0, 0.0)}
+                onClick={() => handleSetCalibration(1.0, 0.0, 0.0)}
                 className="flex-1 py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-semibold text-center transition-colors"
               >
                 📱 Vue Normale (1.0x)

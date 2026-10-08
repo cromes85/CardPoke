@@ -32,6 +32,13 @@ import {
   autoEnhanceLighting
 } from '../utils/cardDetection';
 
+export const DEFAULT_3D_STAND_CORNERS = [
+  { x: 0.268, y: 0.480 },
+  { x: 0.538, y: 0.480 },
+  { x: 0.538, y: 0.690 },
+  { x: 0.268, y: 0.690 }
+];
+
 export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm, onCancel }) {
   const containerRef = useRef(null);
   const imageCanvasRef = useRef(null);
@@ -65,7 +72,12 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
       } catch (e) {}
     }
     if (sourceCanvas) {
-      return detectCardCorners(sourceCanvas);
+      const w = sourceCanvas.width;
+      const h = sourceCanvas.height;
+      return DEFAULT_3D_STAND_CORNERS.map(pt => ({
+        x: pt.x * w,
+        y: pt.y * h
+      }));
     }
     return [];
   });
@@ -385,7 +397,14 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
   const handleResetPermanentCalibration = () => {
     localStorage.removeItem('pokescan_custom_corners');
     setSavedAsCalibration(false);
-    handleAutoDetect();
+    if (workingCanvas) {
+      const curW = workingCanvas.width;
+      const curH = workingCanvas.height;
+      setCorners(DEFAULT_3D_STAND_CORNERS.map(pt => ({
+        x: pt.x * curW,
+        y: pt.y * curH
+      })));
+    }
   };
 
   // Confirm perspective warp & run OCR

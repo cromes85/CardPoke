@@ -38,6 +38,13 @@ import { soundManager } from '../utils/audio';
 import { ocrService } from '../utils/ocrService';
 import { searchCard, getCardCategoryInfo } from '../utils/tcgApi';
 
+export const DEFAULT_3D_STAND_CORNERS = [
+  { x: 0.268, y: 0.480 },
+  { x: 0.538, y: 0.480 },
+  { x: 0.538, y: 0.690 },
+  { x: 0.268, y: 0.690 }
+];
+
 export default function Scanner({ 
   onCardCaptured, 
   onFinishBatchSession, 
@@ -73,11 +80,11 @@ export default function Scanner({
   });
   const [offsetX, setOffsetX] = useState(() => {
     const saved = localStorage.getItem('pokescan_offset_x_3d_v362');
-    return saved ? parseFloat(saved) : 0.12;
+    return saved ? parseFloat(saved) : 0.10;
   });
   const [offsetY, setOffsetY] = useState(() => {
     const saved = localStorage.getItem('pokescan_offset_y_3d_v362');
-    return saved ? parseFloat(saved) : -0.05;
+    return saved ? parseFloat(saved) : -0.08;
   });
   const [showZoomPanel, setShowZoomPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -127,9 +134,10 @@ export default function Scanner({
   const [customCorners, setCustomCorners] = useState(() => {
     try {
       const saved = localStorage.getItem('pokescan_custom_corners');
-      return saved ? JSON.parse(saved) : null;
+      if (saved) return JSON.parse(saved);
+      return DEFAULT_3D_STAND_CORNERS;
     } catch (e) {
-      return null;
+      return DEFAULT_3D_STAND_CORNERS;
     }
   });
   const [copiedViewfinderCoords, setCopiedViewfinderCoords] = useState(false);
@@ -139,8 +147,10 @@ export default function Scanner({
     const handleStorageChange = () => {
       try {
         const saved = localStorage.getItem('pokescan_custom_corners');
-        setCustomCorners(saved ? JSON.parse(saved) : null);
-      } catch (e) {}
+        setCustomCorners(saved ? JSON.parse(saved) : DEFAULT_3D_STAND_CORNERS);
+      } catch (e) {
+        setCustomCorners(DEFAULT_3D_STAND_CORNERS);
+      }
     };
     window.addEventListener('storage', handleStorageChange);
     const interval = setInterval(handleStorageChange, 1000);
@@ -1088,10 +1098,10 @@ export default function Scanner({
           <div className="absolute bottom-3 right-3 sm:right-4 z-30 flex items-center gap-1 bg-slate-950/90 backdrop-blur-md p-1 sm:p-1.5 rounded-2xl border border-slate-700/80 shadow-2xl">
             {[
               { label: '1x', val: 1.0, ox: 0.0, oy: 0.0 },
-              { label: '1.5x', val: 1.5, ox: 0.06, oy: -0.03 },
-              { label: '2x', val: 2.0, ox: 0.10, oy: -0.04 },
-              { label: '2.6x 🎯 3D', val: 2.6, ox: 0.12, oy: -0.05 },
-              { label: '3x', val: 3.0, ox: 0.14, oy: -0.06 }
+              { label: '1.5x', val: 1.5, ox: 0.05, oy: -0.04 },
+              { label: '2x', val: 2.0, ox: 0.08, oy: -0.06 },
+              { label: '2.6x 🎯 3D', val: 2.6, ox: 0.10, oy: -0.08 },
+              { label: '3x', val: 3.0, ox: 0.12, oy: -0.10 }
             ].map(preset => (
               <button
                 key={preset.val}
@@ -1156,7 +1166,7 @@ export default function Scanner({
                     ◀
                   </button>
                   <button
-                    onClick={() => handleSetCalibration(2.6, 0.12, -0.05)}
+                    onClick={() => handleSetCalibration(2.6, 0.10, -0.08)}
                     title="Centrer par défaut pour support 3D"
                     className="w-8 h-7 rounded-lg bg-red-600/30 text-red-300 font-bold flex items-center justify-center text-[10px] active:scale-95 border border-red-500/40"
                   >
@@ -1253,17 +1263,16 @@ export default function Scanner({
                   <Crop className="w-3.5 h-3.5" />
                   <span>🎯 Calibrer les 4 Coins (Mode Bouton)</span>
                 </button>
-                {customCorners && (
-                  <button
-                    onClick={() => {
-                      localStorage.removeItem('pokescan_custom_corners');
-                      setCustomCorners(null);
-                    }}
-                    className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[10.5px] font-semibold text-center transition-colors"
-                  >
-                    🔄 Réinitialiser
-                  </button>
-                )}
+                <button
+                  onClick={() => {
+                    localStorage.removeItem('pokescan_custom_corners');
+                    setCustomCorners(DEFAULT_3D_STAND_CORNERS);
+                    handleSetCalibration(2.6, 0.10, -0.08);
+                  }}
+                  className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[10.5px] font-semibold text-center transition-colors"
+                >
+                  🔄 Réinitialiser
+                </button>
               </div>
             </div>
 
@@ -1272,8 +1281,8 @@ export default function Scanner({
               <button
                 onClick={() => {
                   localStorage.removeItem('pokescan_custom_corners');
-                  setCustomCorners(null);
-                  handleSetCalibration(2.6, 0.12, -0.05);
+                  setCustomCorners(DEFAULT_3D_STAND_CORNERS);
+                  handleSetCalibration(2.6, 0.10, -0.08);
                 }}
                 className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold text-center transition-colors"
               >

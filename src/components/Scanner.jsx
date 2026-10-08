@@ -75,22 +75,29 @@ export default function Scanner({
 
   // Optical & Digital Zoom Engine for 3D Tower & Distance Calibration (2D Viewport Pan & Zoom)
   const [zoom, setZoom] = useState(() => {
-    const saved = localStorage.getItem('pokescan_zoom_3d_v362');
-    return saved ? parseFloat(saved) : 2.6;
+    const saved = localStorage.getItem('pokescan_zoom_3d_v366');
+    return saved ? parseFloat(saved) : 3.0;
   });
   const [offsetX, setOffsetX] = useState(() => {
-    const saved = localStorage.getItem('pokescan_offset_x_3d_v362');
-    return saved ? parseFloat(saved) : 0.10;
+    const saved = localStorage.getItem('pokescan_offset_x_3d_v366');
+    return saved ? parseFloat(saved) : 0.05;
   });
   const [offsetY, setOffsetY] = useState(() => {
-    const saved = localStorage.getItem('pokescan_offset_y_3d_v362');
-    return saved ? parseFloat(saved) : -0.08;
+    const saved = localStorage.getItem('pokescan_offset_y_3d_v366');
+    return saved ? parseFloat(saved) : -0.24;
   });
   const [showZoomPanel, setShowZoomPanel] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef(null);
   const [hwZoomSupported, setHwZoomSupported] = useState(false);
   const [hwZoomRange, setHwZoomRange] = useState({ min: 1, max: 5, step: 0.1 });
+
+  // Clean up legacy keys once
+  useEffect(() => {
+    ['pokescan_zoom_3d_v362', 'pokescan_offset_x_3d_v362', 'pokescan_offset_y_3d_v362', 'pokescan_zoom_3d', 'pokescan_offset_x_3d', 'pokescan_offset_y_3d'].forEach(k => {
+      try { localStorage.removeItem(k); } catch (e) {}
+    });
+  }, []);
 
   // Real-Time Dynamic Header (Nom + PV/PC) Detection in Standby
   const [liveHeaderScan, setLiveHeaderScan] = useState({
@@ -238,17 +245,17 @@ export default function Scanner({
   // Set Zoom and 2D Calibration Level and persist per mode
   const handleSetCalibration = useCallback((newZoom, newOffX = null, newOffY = null) => {
     const targetZoom = Math.max(1.0, Math.min(4.5, Number(newZoom)));
-    const targetOffX = newOffX !== null ? Math.max(-0.4, Math.min(0.4, Number(newOffX))) : offsetX;
-    const targetOffY = newOffY !== null ? Math.max(-0.4, Math.min(0.4, Number(newOffY))) : offsetY;
+    const targetOffX = newOffX !== null ? Math.max(-0.6, Math.min(0.6, Number(newOffX))) : offsetX;
+    const targetOffY = newOffY !== null ? Math.max(-0.6, Math.min(0.6, Number(newOffY))) : offsetY;
     
     setZoom(targetZoom);
     if (newOffX !== null) setOffsetX(targetOffX);
     if (newOffY !== null) setOffsetY(targetOffY);
 
     if (scanMode === 'batch3d') {
-      localStorage.setItem('pokescan_zoom_3d', String(targetZoom));
-      if (newOffX !== null) localStorage.setItem('pokescan_offset_x_3d', String(targetOffX));
-      if (newOffY !== null) localStorage.setItem('pokescan_offset_y_3d', String(targetOffY));
+      localStorage.setItem('pokescan_zoom_3d_v366', String(targetZoom));
+      if (newOffX !== null) localStorage.setItem('pokescan_offset_x_3d_v366', String(targetOffX));
+      if (newOffY !== null) localStorage.setItem('pokescan_offset_y_3d_v366', String(targetOffY));
     } else {
       localStorage.setItem('pokescan_zoom_normal', String(targetZoom));
       if (newOffX !== null) localStorage.setItem('pokescan_offset_x_normal', String(targetOffX));
@@ -258,8 +265,8 @@ export default function Scanner({
 
   // Handle Nudge via D-Pad Buttons
   const handleNudgeOffset = (dx, dy) => {
-    const nextX = Math.max(-0.4, Math.min(0.4, offsetX + dx * 0.02));
-    const nextY = Math.max(-0.4, Math.min(0.4, offsetY + dy * 0.02));
+    const nextX = Math.max(-0.6, Math.min(0.6, offsetX + dx * 0.02));
+    const nextY = Math.max(-0.6, Math.min(0.6, offsetY + dy * 0.02));
     handleSetCalibration(zoom, nextX, nextY);
   };
 
@@ -292,8 +299,8 @@ export default function Scanner({
     const deltaX = (dx / container.width) * (1 / zoom) * 1.5;
     const deltaY = (dy / container.height) * (1 / zoom) * 1.5;
 
-    const newX = Math.max(-0.4, Math.min(0.4, panStartRef.current.initX + deltaX));
-    const newY = Math.max(-0.4, Math.min(0.4, panStartRef.current.initY + deltaY));
+    const newX = Math.max(-0.6, Math.min(0.6, panStartRef.current.initX + deltaX));
+    const newY = Math.max(-0.6, Math.min(0.6, panStartRef.current.initY + deltaY));
 
     setOffsetX(newX);
     setOffsetY(newY);
@@ -314,9 +321,9 @@ export default function Scanner({
   const handleModeChange = (mode) => {
     setScanMode(mode);
     if (mode === 'batch3d') {
-      const saved3D = parseFloat(localStorage.getItem('pokescan_zoom_3d_v362')) || 2.6;
-      const savedOffX = parseFloat(localStorage.getItem('pokescan_offset_x_3d_v362')) || 0.12;
-      const savedOffY = parseFloat(localStorage.getItem('pokescan_offset_y_3d_v362')) || -0.05;
+      const saved3D = parseFloat(localStorage.getItem('pokescan_zoom_3d_v366')) || 3.0;
+      const savedOffX = parseFloat(localStorage.getItem('pokescan_offset_x_3d_v366')) || 0.05;
+      const savedOffY = parseFloat(localStorage.getItem('pokescan_offset_y_3d_v366')) || -0.24;
       handleSetCalibration(saved3D, savedOffX, savedOffY);
     } else {
       const savedNorm = parseFloat(localStorage.getItem('pokescan_zoom_normal')) || 1.0;
@@ -1098,10 +1105,10 @@ export default function Scanner({
           <div className="absolute bottom-3 right-3 sm:right-4 z-30 flex items-center gap-1 bg-slate-950/90 backdrop-blur-md p-1 sm:p-1.5 rounded-2xl border border-slate-700/80 shadow-2xl">
             {[
               { label: '1x', val: 1.0, ox: 0.0, oy: 0.0 },
-              { label: '1.5x', val: 1.5, ox: 0.05, oy: -0.04 },
-              { label: '2x', val: 2.0, ox: 0.08, oy: -0.06 },
-              { label: '2.6x 🎯 3D', val: 2.6, ox: 0.10, oy: -0.08 },
-              { label: '3x', val: 3.0, ox: 0.12, oy: -0.10 }
+              { label: '1.5x', val: 1.5, ox: 0.02, oy: -0.10 },
+              { label: '2x', val: 2.0, ox: 0.03, oy: -0.16 },
+              { label: '3.0x 🎯 3D', val: 3.0, ox: 0.05, oy: -0.24 },
+              { label: '3.5x', val: 3.5, ox: 0.06, oy: -0.28 }
             ].map(preset => (
               <button
                 key={preset.val}
@@ -1166,7 +1173,7 @@ export default function Scanner({
                     ◀
                   </button>
                   <button
-                    onClick={() => handleSetCalibration(2.6, 0.10, -0.08)}
+                    onClick={() => handleSetCalibration(3.0, 0.05, -0.24)}
                     title="Centrer par défaut pour support 3D"
                     className="w-8 h-7 rounded-lg bg-red-600/30 text-red-300 font-bold flex items-center justify-center text-[10px] active:scale-95 border border-red-500/40"
                   >
@@ -1267,7 +1274,7 @@ export default function Scanner({
                   onClick={() => {
                     localStorage.removeItem('pokescan_custom_corners');
                     setCustomCorners(DEFAULT_3D_STAND_CORNERS);
-                    handleSetCalibration(2.6, 0.10, -0.08);
+                    handleSetCalibration(3.0, 0.05, -0.24);
                   }}
                   className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[10.5px] font-semibold text-center transition-colors"
                 >
@@ -1282,11 +1289,11 @@ export default function Scanner({
                 onClick={() => {
                   localStorage.removeItem('pokescan_custom_corners');
                   setCustomCorners(DEFAULT_3D_STAND_CORNERS);
-                  handleSetCalibration(2.6, 0.10, -0.08);
+                  handleSetCalibration(3.0, 0.05, -0.24);
                 }}
                 className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold text-center transition-colors"
               >
-                🎯 Tour 3D Préréglée (2.6x)
+                🎯 Tour 3D Préréglée (3.0x)
               </button>
               <button
                 onClick={() => {

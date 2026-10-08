@@ -71,8 +71,8 @@ export default function BorderDetectionCamera() {
         video: {
           deviceId: deviceId ? { exact: deviceId } : undefined,
           facingMode: deviceId ? undefined : { ideal: 'environment' },
-          width: { ideal: 1920, min: 1280 },
-          height: { ideal: 1080, min: 720 }
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
         }
       };
 
@@ -81,7 +81,11 @@ export default function BorderDetectionCamera() {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn('Erreur lecture directe video:', playErr);
+        }
       }
 
       setCameraActive(true);
@@ -89,14 +93,16 @@ export default function BorderDetectionCamera() {
       trackerRef.current.reset();
 
       const track = stream.getVideoTracks()[0];
-      const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+      const capabilities = track?.getCapabilities ? track.getCapabilities() : {};
       setHasTorch(!!capabilities.torch);
 
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoInputs = devices.filter(d => d.kind === 'videoinput');
       setVideoDevices(videoInputs);
       if (!selectedDeviceId && videoInputs.length > 0) {
-        setSelectedDeviceId(videoInputs[0].deviceId);
+        const activeTrack = stream.getVideoTracks()[0];
+        const activeDevId = activeTrack?.getSettings?.()?.deviceId || videoInputs[0].deviceId;
+        setSelectedDeviceId(activeDevId);
       }
     } catch (err) {
       console.error('Erreur accès caméra:', err);
@@ -116,6 +122,16 @@ export default function BorderDetectionCamera() {
       }
     };
   }, []);
+
+  // Sécurité d'attachement du flux vidéo
+  useEffect(() => {
+    if (cameraActive && videoRef.current && streamRef.current) {
+      if (videoRef.current.srcObject !== streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+      }
+      videoRef.current.play().catch(e => console.warn('Play error:', e));
+    }
+  }, [cameraActive]);
 
   // 2. Basculer Torche / Flash
   const toggleTorch = async () => {
@@ -338,15 +354,13 @@ export default function BorderDetectionCamera() {
       <div className="relative flex-1 w-full bg-black flex items-center justify-center overflow-hidden">
         
         {/* Flux Caméra */}
-        {cameraActive && (
-          <video
-            ref={videoRef}
-            playsInline
-            muted
-            autoPlay
-            className="w-full h-full object-cover sm:object-contain"
-          />
-        )}
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          autoPlay
+          className={`w-full h-full object-cover sm:object-contain ${staticImageSource ? 'hidden' : 'block'}`}
+        />
 
         {/* Image Statique de Test */}
         {staticImageSource && (

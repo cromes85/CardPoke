@@ -20,7 +20,11 @@ import {
   Flame, 
   Check,
   Sun,
-  SunMedium
+  SunMedium,
+  Copy,
+  Crosshair,
+  Save,
+  Crop
 } from 'lucide-react';
 import { 
   detectCardCorners, 
@@ -119,6 +123,33 @@ export default function Scanner({
   const lastCaptureTimeRef = useRef(0);
   const batchQueueRef = useRef([]);
 
+  // Custom Calibrated 4 Corners from CardCropModal (saved permanently)
+  const [customCorners, setCustomCorners] = useState(() => {
+    try {
+      const saved = localStorage.getItem('pokescan_custom_corners');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+  const [copiedViewfinderCoords, setCopiedViewfinderCoords] = useState(false);
+
+  // Sync custom corners from localStorage
+  useEffect(() => {
+    const handleStorageChange = () => {
+      try {
+        const saved = localStorage.getItem('pokescan_custom_corners');
+        setCustomCorners(saved ? JSON.parse(saved) : null);
+      } catch (e) {}
+    };
+    window.addEventListener('storage', handleStorageChange);
+    const interval = setInterval(handleStorageChange, 1000);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
+  }, []);
+
   // Compute Zoomed ROI in Video Coordinate System with 2D Offsets
   const getZoomedCropDimensions = useCallback((vw, vh, z, offX, offY) => {
     const zoomVal = Math.max(1.0, z || 1.0);
@@ -134,6 +165,65 @@ export default function Scanner({
 
     return { cropX, cropY, cropW, cropH };
   }, []);
+
+  // Compute 4 relative corners [0..1] of the current viewfinder framing
+  const getViewfinderRelativeCorners = useCallback(() => {
+    if (customCorners && customCorners.length === 4) {
+      return customCorners;
+    }
+    const vw = 1000;
+    const vh = 1000;
+    const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
+    return [
+      { x: cropX / vw, y: cropY / vh },
+      { x: (cropX + cropW) / vw, y: cropY / vh },
+      { x: (cropX + cropW) / vw, y: (cropY + cropH) / vh },
+      { x: cropX / vw, y: (cropY + cropH) / vh }
+    ];
+  }, [customCorners, zoom, offsetX, offsetY, getZoomedCropDimensions]);
+
+  // Copy Viewfinder 4-corner coordinates
+  const handleCopyViewfinderCoords = () => {
+    const relative = getViewfinderRelativeCorners();
+    const p1 = { x: (relative[0].x * 100).toFixed(1), y: (relative[0].y * 100).toFixed(1) };
+    const p2 = { x: (relative[1].x * 100).toFixed(1), y: (relative[1].y * 100).toFixed(1) };
+    const p3 = { x: (relative[2].x * 100).toFixed(1), y: (relative[2].y * 100).toFixed(1) };
+    const p4 = { x: (relative[3].x * 100).toFixed(1), y: (relative[3].y * 100).toFixed(1) };
+
+    const text = `📐 Coordonnées du Viseur (${scanMode === 'batch3d' ? 'Support 3D' : 'Mode Bouton'}) :\n` +
+                 `1. Haut-Gauche (TL) : X=${p1.x}%, Y=${p1.y}%\n` +
+                 `2. Haut-Droit  (TR) : X=${p2.x}%, Y=${p2.y}%\n` +
+                 `3. Bas-Droit   (BR) : X=${p3.x}%, Y=${p3.y}%\n` +
+                 `4. Bas-Gauche  (BL) : X=${p4.x}%, Y=${p4.y}%\n\n` +
+                 `JSON: ` + JSON.stringify(relative.map(p => ({ x: Number(p.x.toFixed(4)), y: Number(p.y.toFixed(4)) })));
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedViewfinderCoords(true);
+      setTimeout(() => setCopiedViewfinderCoords(false), 2500);
+    }
+  };
+
+  // Open Calibration in CardCropModal by taking a snapshot
+  const handleOpenCalibrationCrop = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const vw = video.videoWidth || 1280;
+    const vh = video.videoHeight || 720;
+    const fullCanvas = document.createElement('canvas');
+    fullCanvas.width = vw;
+    fullCanvas.height = vh;
+    const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
+    fullCtx.drawImage(video, 0, 0, vw, vh);
+
+    const relative = getViewfinderRelativeCorners();
+    const pixelCorners = relative.map(p => ({ x: p.x * vw, y: p.y * vh }));
+
+    onCardCaptured({
+      sourceCanvas: fullCanvas,
+      detectedCorners: pixelCorners
+    });
+  };
 
   // Set Zoom and 2D Calibration Level and persist per mode
   const handleSetCalibration = useCallback((newZoom, newOffX = null, newOffY = null) => {
@@ -413,10 +503,34 @@ export default function Scanner({
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
 
-      let headerCanvas = null;
+      // 1. In Custom Calibrated Mode: Extract top 22% of custom quad
+      if (customCorners && customCorners.length === 4) {
+        try {
+          const customPx = customCorners.map(pt => ({ x: pt.x * vw, y: pt.y * vh }));
+          const headerQuad = [
+            customPx[0],
+            customPx[1],
+            {
+              x: customPx[1].x + (customPx[2].x - customPx[1].x) * 0.22,
+              y: customPx[1].y + (customPx[2].y - customPx[1].y) * 0.22
+            },
+            {
+              x: customPx[0].x + (customPx[3].x - customPx[0].x) * 0.22,
+              y: customPx[0].y + (customPx[3].y - customPx[0].y) * 0.22
+            }
+          ];
+          const fullCanvas = document.createElement('canvas');
+          fullCanvas.width = vw;
+          fullCanvas.height = vh;
+          const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
+          fullCtx.drawImage(video, 0, 0, vw, vh);
 
-      // 1. In Free Photo mode: If valid Live Document Quad is locked, extract top 20% of the quad
-      if (scanMode !== 'batch3d' && isAutoDocMode && liveQuadRef.current && liveQuadRef.current.headerQuad) {
+          headerCanvas = warpPerspective(fullCanvas, headerQuad, 420, 110);
+        } catch (e) {}
+      }
+
+      // 2. In Free Photo mode: If valid Live Document Quad is locked, extract top 20% of the quad
+      if (!headerCanvas && scanMode !== 'batch3d' && isAutoDocMode && liveQuadRef.current && liveQuadRef.current.headerQuad) {
         try {
           const fullCanvas = document.createElement('canvas');
           fullCanvas.width = vw;
@@ -428,7 +542,7 @@ export default function Scanner({
         } catch (e) {}
       }
 
-      // 2. In Support 3D & default mode: Extract top 22% of the Zoomed ROI (matching the framed card perfectly)
+      // 3. In Support 3D & default mode: Extract top 22% of the Zoomed ROI (matching the framed card perfectly)
       if (!headerCanvas) {
         const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
         const headerW = Math.min(vw - cropX, Math.floor(cropW * 0.96));
@@ -469,9 +583,9 @@ export default function Scanner({
     }, 1300);
 
     return () => clearInterval(interval);
-  }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus, zoom, offsetX, offsetY, isAutoDocMode, getZoomedCropDimensions]);
+  }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus, zoom, offsetX, offsetY, isAutoDocMode, customCorners, getZoomedCropDimensions]);
 
-  // Single Frame Capture with Live Document Auto-Warp or Zoomed ROI
+  // Single Frame Capture with Live Document Auto-Warp, Custom Corners or Zoomed ROI
   const captureFrame = useCallback(() => {
     if (!videoRef.current || isProcessing) return null;
     soundManager.playSnap();
@@ -489,8 +603,35 @@ export default function Scanner({
     let finalCanvas = null;
     let detectedCorners = null;
 
-    // 1. If Live Document Quad is active, do instant Perspective Warp (Android Document Scanner Mode)
-    if (isAutoDocMode && liveQuadRef.current && liveQuadRef.current.corners) {
+    // 1. If in Mode Bouton: pass fullCanvas with current corners so user can adjust and see coordinates in CardCropModal!
+    if (scanMode === 'button') {
+      const rel = customCorners && customCorners.length === 4 ? customCorners : getViewfinderRelativeCorners();
+      const pixelCorners = rel.map(p => ({ x: p.x * vw, y: p.y * vh }));
+
+      onCardCaptured({
+        sourceCanvas: fullCanvas,
+        detectedCorners: pixelCorners
+      });
+      return;
+    }
+
+    // 2. If Custom Calibrated Corners exist:
+    if (customCorners && customCorners.length === 4) {
+      try {
+        const customPx = customCorners.map(pt => ({ x: pt.x * vw, y: pt.y * vh }));
+        const warped = warpPerspective(fullCanvas, customPx, 630, 880);
+        finalCanvas = autoEnhanceLighting(warped, 0.85);
+        detectedCorners = [
+          { x: 0, y: 0 },
+          { x: 630, y: 0 },
+          { x: 630, y: 880 },
+          { x: 0, y: 880 }
+        ];
+      } catch (e) {}
+    }
+
+    // 3. If Live Document Quad is active, do instant Perspective Warp
+    if (!finalCanvas && isAutoDocMode && liveQuadRef.current && liveQuadRef.current.corners) {
       try {
         const warped = warpPerspective(fullCanvas, liveQuadRef.current.corners, 630, 880);
         finalCanvas = autoEnhanceLighting(warped, 0.85);
@@ -505,7 +646,7 @@ export default function Scanner({
       }
     }
 
-    // 2. Fallback: Zoomed ROI crop
+    // 4. Fallback: Zoomed ROI crop
     if (!finalCanvas) {
       const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
       const cropCanvas = document.createElement('canvas');
@@ -522,7 +663,7 @@ export default function Scanner({
       sourceCanvas: finalCanvas,
       detectedCorners: detectedCorners
     });
-  }, [isProcessing, onCardCaptured, isAutoDocMode, zoom, offsetX, offsetY, getZoomedCropDimensions]);
+  }, [isProcessing, onCardCaptured, scanMode, customCorners, getViewfinderRelativeCorners, isAutoDocMode, zoom, offsetX, offsetY, getZoomedCropDimensions]);
 
   // Handle Standard Auto-Scan Mode Countdown
   useEffect(() => {
@@ -689,14 +830,23 @@ export default function Scanner({
             fullCtx.drawImage(video, 0, 0, vw, vh);
 
             let snapCanvas = null;
-            // 1. If Live Document Quad is locked on card in chute, do instant auto-warp!
-            if (isAutoDocMode && liveQuadRef.current && liveQuadRef.current.corners) {
+
+            // 1. If Custom Calibrated Corners exist, use them directly for 100% stable 3D chute capture!
+            if (customCorners && customCorners.length === 4) {
+              try {
+                const customPx = customCorners.map(pt => ({ x: pt.x * vw, y: pt.y * vh }));
+                snapCanvas = warpPerspective(fullCanvas, customPx, 630, 880);
+              } catch (e) {}
+            }
+
+            // 2. If Live Document Quad is locked on card in chute, do instant auto-warp!
+            if (!snapCanvas && isAutoDocMode && liveQuadRef.current && liveQuadRef.current.corners) {
               try {
                 snapCanvas = warpPerspective(fullCanvas, liveQuadRef.current.corners, 630, 880);
               } catch (e) {}
             }
 
-            // 2. Fallback: High-res zoomed frame crop
+            // 3. Fallback: High-res zoomed frame crop
             if (!snapCanvas) {
               snapCanvas = document.createElement('canvas');
               snapCanvas.width = cropW;
@@ -724,7 +874,7 @@ export default function Scanner({
 
     animId = requestAnimationFrame(checkMotionLoop);
     return () => cancelAnimationFrame(animId);
-  }, [scanMode, batchStatus, hasCamera, isProcessingQueue, processBatchQueue, isAutoDocMode, zoom, offsetX, offsetY, getZoomedCropDimensions]);
+  }, [scanMode, batchStatus, hasCamera, isProcessingQueue, processBatchQueue, isAutoDocMode, customCorners, zoom, offsetX, offsetY, getZoomedCropDimensions]);
 
   // Start Batch Session
   const handleStartBatch = () => {
@@ -1052,16 +1202,89 @@ export default function Scanner({
 
             </div>
 
+            {/* 4-Corners Live Coordinates & Copy */}
+            <div className="bg-slate-950/90 p-2.5 rounded-xl border border-slate-800 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black text-amber-400 flex items-center gap-1">
+                  <Crosshair className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Coordonnées des 4 Coins Actuels</span>
+                </span>
+                <button
+                  onClick={handleCopyViewfinderCoords}
+                  title="Copier les coordonnées exactes des 4 coins dans le presse-papier"
+                  className="flex items-center gap-1 px-2.5 py-0.5 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 text-[10px] font-bold transition-all"
+                >
+                  {copiedViewfinderCoords ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-blue-400" />}
+                  <span>{copiedViewfinderCoords ? '✅ Copié !' : '📋 Copier Coordonnées'}</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-[9.5px] font-mono">
+                {(() => {
+                  const rel = getViewfinderRelativeCorners();
+                  return (
+                    <>
+                      <div className="bg-slate-900 px-2 py-1 rounded border border-slate-800 text-slate-300">
+                        <span className="text-red-400 font-bold block text-[8.5px]">1. Haut-G</span>
+                        X: {(rel[0].x * 100).toFixed(1)}% Y: {(rel[0].y * 100).toFixed(1)}%
+                      </div>
+                      <div className="bg-slate-900 px-2 py-1 rounded border border-slate-800 text-slate-300">
+                        <span className="text-red-400 font-bold block text-[8.5px]">2. Haut-D</span>
+                        X: {(rel[1].x * 100).toFixed(1)}% Y: {(rel[1].y * 100).toFixed(1)}%
+                      </div>
+                      <div className="bg-slate-900 px-2 py-1 rounded border border-slate-800 text-slate-300">
+                        <span className="text-red-400 font-bold block text-[8.5px]">3. Bas-D</span>
+                        X: {(rel[2].x * 100).toFixed(1)}% Y: {(rel[2].y * 100).toFixed(1)}%
+                      </div>
+                      <div className="bg-slate-900 px-2 py-1 rounded border border-slate-800 text-slate-300">
+                        <span className="text-red-400 font-bold block text-[8.5px]">4. Bas-G</span>
+                        X: {(rel[3].x * 100).toFixed(1)}% Y: {(rel[3].y * 100).toFixed(1)}%
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  onClick={handleOpenCalibrationCrop}
+                  className="flex-1 py-1.5 px-2 rounded-xl bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:opacity-95 text-white text-[11px] font-bold text-center transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
+                >
+                  <Crop className="w-3.5 h-3.5" />
+                  <span>🎯 Calibrer les 4 Coins (Mode Bouton)</span>
+                </button>
+                {customCorners && (
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem('pokescan_custom_corners');
+                      setCustomCorners(null);
+                    }}
+                    className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[10.5px] font-semibold text-center transition-colors"
+                  >
+                    🔄 Réinitialiser
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* 1-Click Calibration Shortcuts */}
             <div className="flex items-center gap-2 pt-1">
               <button
-                onClick={() => handleSetCalibration(2.6, 0.12, -0.05)}
+                onClick={() => {
+                  localStorage.removeItem('pokescan_custom_corners');
+                  setCustomCorners(null);
+                  handleSetCalibration(2.6, 0.12, -0.05);
+                }}
                 className="flex-1 py-1.5 px-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold text-center transition-colors"
               >
                 🎯 Tour 3D Préréglée (2.6x)
               </button>
               <button
-                onClick={() => handleSetCalibration(1.0, 0.0, 0.0)}
+                onClick={() => {
+                  localStorage.removeItem('pokescan_custom_corners');
+                  setCustomCorners(null);
+                  handleSetCalibration(1.0, 0.0, 0.0);
+                }}
                 className="flex-1 py-1.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-semibold text-center transition-colors"
               >
                 📱 Vue Normale (1.0x)
@@ -1161,11 +1384,18 @@ export default function Scanner({
 
               {/* Target Card Header Guide */}
               <div className="w-full flex items-center justify-between mb-1">
-                <span className={`text-[9.5px] sm:text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 border ${
-                  scanMode === 'batch3d' ? 'text-emerald-400 border-emerald-500/30' : 'text-red-400 border-red-500/30'
-                }`}>
-                  {scanMode === 'batch3d' ? 'Support 3D' : 'Viseur Carte'}
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className={`text-[9.5px] sm:text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded bg-slate-950/85 border ${
+                    scanMode === 'batch3d' ? 'text-emerald-400 border-emerald-500/30' : 'text-red-400 border-red-500/30'
+                  }`}>
+                    {scanMode === 'batch3d' ? 'Support 3D' : 'Viseur Carte'}
+                  </span>
+                  {customCorners && (
+                    <span className="text-[8.5px] sm:text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40 font-bold flex items-center gap-0.5">
+                      💾 Calibré 4 Coins
+                    </span>
+                  )}
+                </div>
                 <span className="text-[9.5px] sm:text-[10px] text-white/70 bg-slate-950/85 px-1.5 py-0.5 rounded font-mono">
                   63x88mm
                 </span>

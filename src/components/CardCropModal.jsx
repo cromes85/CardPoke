@@ -14,7 +14,11 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Sun
+  Sun,
+  Copy,
+  Save,
+  Check,
+  BookmarkCheck
 } from 'lucide-react';
 import { 
   warpPerspective, 
@@ -38,11 +42,27 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
   const [rotation, setRotation] = useState(0);
   const [showMiniPreview, setShowMiniPreview] = useState(true);
   const [selectedCornerIdx, setSelectedCornerIdx] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [savedAsCalibration, setSavedAsCalibration] = useState(false);
 
   // 4 corners: [TL, TR, BR, BL]
   const [corners, setCorners] = useState(() => {
     if (detectedCorners && detectedCorners.length === 4) {
       return orderCorners(detectedCorners);
+    }
+    const savedCustom = localStorage.getItem('pokescan_custom_corners');
+    if (savedCustom && sourceCanvas) {
+      try {
+        const parsed = JSON.parse(savedCustom);
+        if (parsed.length === 4) {
+          const w = sourceCanvas.width;
+          const h = sourceCanvas.height;
+          return parsed.map(pt => ({
+            x: pt.x * w,
+            y: pt.y * h
+          }));
+        }
+      } catch (e) {}
     }
     if (sourceCanvas) {
       return detectCardCorners(sourceCanvas);
@@ -317,15 +337,63 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
     });
   };
 
+  const w = workingCanvas?.width || 1;
+  const h = workingCanvas?.height || 1;
+
+  // Format 4 corners as readable string and JSON
+  const getFormattedCoordinates = () => {
+    if (!workingCanvas || corners.length !== 4) return '';
+    const p1 = { x: ((corners[0].x / w) * 100).toFixed(1), y: ((corners[0].y / h) * 100).toFixed(1) };
+    const p2 = { x: ((corners[1].x / w) * 100).toFixed(1), y: ((corners[1].y / h) * 100).toFixed(1) };
+    const p3 = { x: ((corners[2].x / w) * 100).toFixed(1), y: ((corners[2].y / h) * 100).toFixed(1) };
+    const p4 = { x: ((corners[3].x / w) * 100).toFixed(1), y: ((corners[3].y / h) * 100).toFixed(1) };
+
+    return `📐 Coordonnées des 4 Coins :\n` +
+           `1. Haut-Gauche (TL) : X=${p1.x}%, Y=${p1.y}%\n` +
+           `2. Haut-Droit  (TR) : X=${p2.x}%, Y=${p2.y}%\n` +
+           `3. Bas-Droit   (BR) : X=${p3.x}%, Y=${p3.y}%\n` +
+           `4. Bas-Gauche  (BL) : X=${p4.x}%, Y=${p4.y}%\n\n` +
+           `JSON: ` + JSON.stringify(corners.map(pt => ({
+             x: Number((pt.x / w).toFixed(4)),
+             y: Number((pt.y / h).toFixed(4))
+           })));
+  };
+
+  // Copy coordinates to clipboard
+  const handleCopyCoordinates = () => {
+    const text = getFormattedCoordinates();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
+  };
+
+  // Save 4 corners as permanent calibration for 3D and Auto modes
+  const handleSaveAsPermanentCalibration = () => {
+    if (!workingCanvas || corners.length !== 4) return;
+    const relativeCorners = corners.map(pt => ({
+      x: Number((pt.x / w).toFixed(4)),
+      y: Number((pt.y / h).toFixed(4))
+    }));
+    localStorage.setItem('pokescan_custom_corners', JSON.stringify(relativeCorners));
+    setSavedAsCalibration(true);
+    setTimeout(() => setSavedAsCalibration(false), 3000);
+  };
+
+  // Reset permanent calibration
+  const handleResetPermanentCalibration = () => {
+    localStorage.removeItem('pokescan_custom_corners');
+    setSavedAsCalibration(false);
+    handleAutoDetect();
+  };
+
   // Confirm perspective warp & run OCR
   const handleConfirm = () => {
     if (!workingCanvas || corners.length !== 4) return;
     const warped = warpPerspective(workingCanvas, corners, 630, 880);
     onConfirm(warped, workingCanvas);
   };
-
-  const w = workingCanvas?.width || 1;
-  const h = workingCanvas?.height || 1;
 
   return (
     <div className="fixed inset-0 z-50 backdrop-blur-md bg-slate-950/90 flex items-center justify-center p-1.5 sm:p-4 overflow-y-auto">
@@ -339,13 +407,13 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
             </div>
             <div>
               <h3 className="text-white font-bold text-xs sm:text-base flex items-center gap-1.5">
-                <span>Cadrage Automatique</span>
+                <span>Cadrage Automatique & Calibrage 4 Coins</span>
                 <span className="text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
-                  v3.5
+                  v3.6.4
                 </span>
               </h3>
               <p className="text-[10px] sm:text-[11px] text-slate-400">
-                Ajustez les coins ou déplacez le cadre
+                Ajustez les 4 coins au doigt ou sauvegardez pour le mode 3D & Auto
               </p>
             </div>
           </div>
@@ -437,6 +505,106 @@ export default function CardCropModal({ sourceCanvas, detectedCorners, onConfirm
             >
               <RotateCw className="w-3.5 h-3.5" />
             </button>
+          </div>
+        </div>
+
+        {/* Live 4-Corner Coordinates & Calibration Bar */}
+        <div className="px-3 sm:px-4 py-2 bg-slate-950 border-b border-slate-800 flex flex-col gap-1.5">
+          <div className="flex items-center justify-between flex-wrap gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-black text-amber-300 flex items-center gap-1">
+                <Crosshair className="w-3.5 h-3.5 text-amber-400" />
+                <span>Coordonnées des 4 Coins</span>
+              </span>
+              {savedAsCalibration && (
+                <span className="text-[9.5px] px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1 animate-pulse">
+                  <Check className="w-3 h-3" /> Cadrage 3D Sauvegardé !
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5 ml-auto">
+              <button
+                onClick={handleCopyCoordinates}
+                title="Copier les coordonnées des 4 coins dans le presse-papier"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 text-[10.5px] font-bold transition-all shadow-sm active:scale-95"
+              >
+                {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-blue-400" />}
+                <span>{copied ? '✅ Copié !' : '📋 Copier Coordonnées'}</span>
+              </button>
+
+              <button
+                onClick={handleSaveAsPermanentCalibration}
+                title="Enregistrer ce cadrage exact pour qu'il soit appliqué automatiquement tout le temps en mode 3D et Auto"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600/25 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/50 text-[10.5px] font-black transition-all shadow-sm active:scale-95"
+              >
+                <Save className="w-3 h-3 text-emerald-400" />
+                <span>💾 Enregistrer pour Support 3D & Auto</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 4 Interactive Corner Pill Displays */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-[10px] font-mono">
+            <div 
+              onClick={() => setSelectedCornerIdx(0)}
+              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                selectedCornerIdx === 0 
+                  ? 'bg-red-950/60 border-red-500 text-red-200 ring-1 ring-red-500/50' 
+                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between font-sans text-[9px] font-bold text-red-400 mb-0.5">
+                <span>1. Haut-Gauche (TL)</span>
+                {selectedCornerIdx === 0 && <span className="text-[8px] bg-red-600 text-white px-1 rounded">Actif</span>}
+              </div>
+              <div>X: {((corners[0]?.x / w) * 100).toFixed(1)}% | Y: {((corners[0]?.y / h) * 100).toFixed(1)}%</div>
+            </div>
+
+            <div 
+              onClick={() => setSelectedCornerIdx(1)}
+              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                selectedCornerIdx === 1 
+                  ? 'bg-red-950/60 border-red-500 text-red-200 ring-1 ring-red-500/50' 
+                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between font-sans text-[9px] font-bold text-red-400 mb-0.5">
+                <span>2. Haut-Droit (TR)</span>
+                {selectedCornerIdx === 1 && <span className="text-[8px] bg-red-600 text-white px-1 rounded">Actif</span>}
+              </div>
+              <div>X: {((corners[1]?.x / w) * 100).toFixed(1)}% | Y: {((corners[1]?.y / h) * 100).toFixed(1)}%</div>
+            </div>
+
+            <div 
+              onClick={() => setSelectedCornerIdx(2)}
+              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                selectedCornerIdx === 2 
+                  ? 'bg-red-950/60 border-red-500 text-red-200 ring-1 ring-red-500/50' 
+                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between font-sans text-[9px] font-bold text-red-400 mb-0.5">
+                <span>3. Bas-Droit (BR)</span>
+                {selectedCornerIdx === 2 && <span className="text-[8px] bg-red-600 text-white px-1 rounded">Actif</span>}
+              </div>
+              <div>X: {((corners[2]?.x / w) * 100).toFixed(1)}% | Y: {((corners[2]?.y / h) * 100).toFixed(1)}%</div>
+            </div>
+
+            <div 
+              onClick={() => setSelectedCornerIdx(3)}
+              className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                selectedCornerIdx === 3 
+                  ? 'bg-red-950/60 border-red-500 text-red-200 ring-1 ring-red-500/50' 
+                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between font-sans text-[9px] font-bold text-red-400 mb-0.5">
+                <span>4. Bas-Gauche (BL)</span>
+                {selectedCornerIdx === 3 && <span className="text-[8px] bg-red-600 text-white px-1 rounded">Actif</span>}
+              </div>
+              <div>X: {((corners[3]?.x / w) * 100).toFixed(1)}% | Y: {((corners[3]?.y / h) * 100).toFixed(1)}%</div>
+            </div>
           </div>
         </div>
 

@@ -11,7 +11,9 @@ import {
   Layers,
   Sparkles,
   Sun,
-  Sliders
+  Sliders,
+  Download,
+  Wand2
 } from 'lucide-react';
 import {
   autoDetectCardEdges,
@@ -48,6 +50,7 @@ export default function BorderDetectionCamera() {
     return saved ? parseFloat(saved) : 1.08;
   });
   const [showLightingPanel, setShowLightingPanel] = useState(false);
+  const [autoEnhance, setAutoEnhance] = useState(true);
 
   // États Caméra & Matériel
   const [cameraActive, setCameraActive] = useState(false);
@@ -71,7 +74,7 @@ export default function BorderDetectionCamera() {
   const lastFpsTimeRef = useRef(performance.now());
   const lastProcessTimeRef = useRef(0);
 
-  // 1. Démarrage Caméra
+  // 1. Démarrage Caméra Haute Définition (Capteur 4K / UHD avec autofocus continu)
   const startCamera = useCallback(async (deviceId = '') => {
     setCameraError(null);
     if (streamRef.current) {
@@ -79,17 +82,32 @@ export default function BorderDetectionCamera() {
     }
 
     try {
-      const constraints = {
-        audio: false,
-        video: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          facingMode: deviceId ? undefined : { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        }
-      };
+      let stream;
+      try {
+        // Tentative 4K / UHD avec focus continu
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            facingMode: deviceId ? undefined : { ideal: 'environment' },
+            width: { ideal: 3840, min: 1280 },
+            height: { ideal: 2160, min: 720 },
+            advanced: [{ focusMode: 'continuous' }]
+          }
+        });
+      } catch (errHighRes) {
+        // Repli 1080p
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            deviceId: deviceId ? { exact: deviceId } : undefined,
+            facingMode: deviceId ? undefined : { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        });
+      }
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
 
       if (videoRef.current) {
@@ -281,33 +299,58 @@ export default function BorderDetectionCamera() {
     localStorage.setItem('card_lighting_contrast', c.toString());
   };
 
-  // 6. Figer & Extraire la carte redressée (630 x 880 px)
-  const handleCaptureWarped = () => {
+  // 6. Figer & Extraire la carte redressée (750 x 1050 px HD) avec amélioration automatique
+  const handleCaptureWarped = async (forceEnhance = autoEnhance) => {
     if (!corners || corners.length !== 4) return;
 
-    const canvas = document.createElement('canvas');
-    let width = 0, height = 0;
+    let sourceCanvas = null;
 
-    if (staticImageSource) {
-      width = staticImageSource.naturalWidth || staticImageSource.width;
-      height = staticImageSource.naturalHeight || staticImageSource.height;
-      canvas.width = width;
-      canvas.height = height;
-      canvas.getContext('2d').drawImage(staticImageSource, 0, 0);
-    } else if (videoRef.current) {
-      const video = videoRef.current;
-      width = video.videoWidth;
-      height = video.videoHeight;
-      canvas.width = width;
-      canvas.height = height;
-      canvas.getContext('2d').drawImage(video, 0, 0);
+    // 1. Essai de capture haute résolution native capteur via ImageCapture API
+    if (!staticImageSource && streamRef.current && typeof window.ImageCapture !== 'undefined') {
+      try {
+        const track = streamRef.current.getVideoTracks()[0];
+        if (track && track.readyState === 'live') {
+          const imageCap = new window.ImageCapture(track);
+          if (typeof imageCap.grabFrame === 'function') {
+            const bitmap = await imageCap.grabFrame();
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = bitmap.width;
+            tempCanvas.height = bitmap.height;
+            tempCanvas.getContext('2d').drawImage(bitmap, 0, 0);
+            sourceCanvas = tempCanvas;
+          }
+        }
+      } catch (capErr) {
+        console.warn('ImageCapture fallback sur le flux vidéo:', capErr);
+      }
     }
 
-    if (width === 0 || height === 0) return;
+    if (!sourceCanvas) {
+      const canvas = document.createElement('canvas');
+      let width = 0, height = 0;
 
-    const warped = extractCardWarped(canvas, corners, 630, 880, brightness, contrast);
+      if (staticImageSource) {
+        width = staticImageSource.naturalWidth || staticImageSource.width;
+        height = staticImageSource.naturalHeight || staticImageSource.height;
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(staticImageSource, 0, 0);
+      } else if (videoRef.current) {
+        const video = videoRef.current;
+        width = video.videoWidth;
+        height = video.videoHeight;
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+      }
+      sourceCanvas = canvas;
+    }
+
+    if (!sourceCanvas || sourceCanvas.width === 0 || sourceCanvas.height === 0) return;
+
+    const warped = extractCardWarped(sourceCanvas, corners, 750, 1050, brightness, contrast, forceEnhance);
     if (warped) {
-      setCapturedWarpedImage(warped.toDataURL('image/jpeg', 0.94));
+      setCapturedWarpedImage(warped.toDataURL('image/jpeg', 0.95));
     }
   };
 
@@ -642,32 +685,57 @@ export default function BorderDetectionCamera() {
       {/* 4. Modal de Contrôle de l'Extraction Redressée */}
       {capturedWarpedImage && (
         <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col items-center justify-center p-4">
-          <div className="max-w-xs w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl flex flex-col items-center space-y-4">
+          <div className="max-w-xs w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl flex flex-col items-center space-y-3.5">
             <div className="flex items-center justify-between w-full">
               <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                Carte Découpée aux 4 Bords
+                Scan Redressé HD
               </h3>
-              <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400">
-                630 × 880 px
+              <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-emerald-950 border border-emerald-800 text-emerald-300 font-bold">
+                750 × 1050 px
               </span>
             </div>
 
             <div className="w-full aspect-[63/88] rounded-xl overflow-hidden border-2 border-emerald-500 shadow-2xl bg-slate-950 flex items-center justify-center">
               <img
                 src={capturedWarpedImage}
-                alt="Carte extraite"
+                alt="Carte extraite HD"
                 className="w-full h-full object-cover"
               />
             </div>
 
-            <p className="text-[11px] text-slate-400 text-center">
-              Les 4 bords extérieurs ont été détectés et redressés automatiquement.
-            </p>
+            {/* Sélecteur de Rendu : Amélioration Auto HD vs Brut */}
+            <div className="w-full flex items-center gap-2">
+              <button
+                onClick={() => {
+                  const nextState = !autoEnhance;
+                  setAutoEnhance(nextState);
+                  handleCaptureWarped(nextState);
+                }}
+                className={`flex-1 py-2 px-3 rounded-xl border text-[11px] font-semibold flex items-center justify-center gap-1.5 transition active:scale-95 ${
+                  autoEnhance
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
+                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                }`}
+              >
+                <Wand2 className="w-3.5 h-3.5 text-amber-400" />
+                {autoEnhance ? '✨ HD Éclatant' : '📷 Brut'}
+              </button>
+
+              <a
+                href={capturedWarpedImage}
+                download={`pokemon_scan_${Date.now()}.jpg`}
+                className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-[11px] font-semibold flex items-center justify-center gap-1.5 transition active:scale-95"
+                title="Télécharger l'image"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Enregistrer</span>
+              </a>
+            </div>
 
             <button
               onClick={() => setCapturedWarpedImage(null)}
-              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition"
+              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition active:scale-95 shadow-md shadow-indigo-600/20"
             >
               Retour au Viseur
             </button>

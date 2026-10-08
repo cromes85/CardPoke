@@ -13,7 +13,11 @@ import {
   Sun,
   Sliders,
   Download,
-  Wand2
+  Wand2,
+  Hash,
+  Loader2,
+  Copy,
+  Check
 } from 'lucide-react';
 import {
   autoDetectCardEdges,
@@ -21,6 +25,7 @@ import {
   extractCardWarped,
   POKEMON_RATIO
 } from '../utils/cardEdgeDetector';
+import { extractCardNumber } from '../utils/cardNumberExtractor';
 
 // Coordonnées d'usine étalonnées pour la Tour 3D
 const STAND_3D_CORNERS = [
@@ -36,6 +41,7 @@ export default function BorderDetectionCamera() {
   const animFrameRef = useRef(null);
   const trackerRef = useRef(new RobustCardTracker());
   const fileInputRef = useRef(null);
+  const lastWarpedCanvasRef = useRef(null);
 
   // Mode de Détection : 'stand' (Tour/Support 3D) | 'auto' (Table / Libre)
   const [scanMode, setScanMode] = useState('stand');
@@ -51,6 +57,12 @@ export default function BorderDetectionCamera() {
   });
   const [showLightingPanel, setShowLightingPanel] = useState(false);
   const [autoEnhance, setAutoEnhance] = useState(true);
+
+  // États OCR Numéro de Carte
+  const [detectedNumber, setDetectedNumber] = useState('');
+  const [isReadingNumber, setIsReadingNumber] = useState(false);
+  const [footerCropPreview, setFooterCropPreview] = useState(null);
+  const [isCopied, setIsCopied] = useState(false);
 
   // États Caméra & Matériel
   const [cameraActive, setCameraActive] = useState(false);
@@ -299,7 +311,34 @@ export default function BorderDetectionCamera() {
     localStorage.setItem('card_lighting_contrast', c.toString());
   };
 
-  // 6. Figer & Extraire la carte redressée (750 x 1050 px HD) avec amélioration automatique
+  // Lecture OCR du numéro de carte
+  const readCardNumber = async (canvas) => {
+    if (!canvas) return;
+    setIsReadingNumber(true);
+    setDetectedNumber('');
+    try {
+      const ocrRes = await extractCardNumber(canvas);
+      if (ocrRes.number) {
+        setDetectedNumber(ocrRes.number);
+      }
+      if (ocrRes.footerCropUrl) {
+        setFooterCropPreview(ocrRes.footerCropUrl);
+      }
+    } catch (err) {
+      console.warn('Erreur lecture numéro:', err);
+    } finally {
+      setIsReadingNumber(false);
+    }
+  };
+
+  const handleCopyNumber = () => {
+    if (!detectedNumber) return;
+    navigator.clipboard?.writeText(detectedNumber);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  // 6. Figer & Extraire la carte redressée (750 x 1050 px HD) avec OCR Numéro
   const handleCaptureWarped = async (forceEnhance = autoEnhance) => {
     if (!corners || corners.length !== 4) return;
 
@@ -350,7 +389,10 @@ export default function BorderDetectionCamera() {
 
     const warped = extractCardWarped(sourceCanvas, corners, 750, 1050, brightness, contrast, forceEnhance);
     if (warped) {
+      lastWarpedCanvasRef.current = warped;
       setCapturedWarpedImage(warped.toDataURL('image/jpeg', 0.95));
+      // Lancement immédiat de la capture et lecture du numéro de carte
+      readCardNumber(warped);
     }
   };
 
@@ -702,6 +744,72 @@ export default function BorderDetectionCamera() {
                 alt="Carte extraite HD"
                 className="w-full h-full object-cover"
               />
+            </div>
+
+            {/* Boîtier Numéro de Carte (OCR Automatique) */}
+            <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border border-slate-800 flex flex-col gap-2 shadow-inner">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Hash className="w-3.5 h-3.5 text-amber-400" />
+                  Numéro de Carte
+                </span>
+                {isReadingNumber ? (
+                  <span className="text-[10px] text-amber-400 flex items-center gap-1 font-mono animate-pulse">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Lecture OCR...
+                  </span>
+                ) : detectedNumber ? (
+                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
+                    <CheckCircle2 className="w-3 h-3" /> Détecté
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    Non détecté
+                  </span>
+                )}
+              </div>
+
+              {/* Aperçu Zoomé du Bas + Champ d'Édition / Validation */}
+              <div className="flex items-center gap-2">
+                {footerCropPreview && (
+                  <div className="w-24 h-9 rounded-lg border border-slate-700 overflow-hidden bg-black flex-shrink-0 flex items-center justify-center shadow">
+                    <img
+                      src={footerCropPreview}
+                      alt="Zoom N°"
+                      className="w-full h-full object-cover"
+                      title="Zone détectée sur la carte"
+                    />
+                  </div>
+                )}
+
+                <div className="flex-1 flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={detectedNumber}
+                    onChange={(e) => setDetectedNumber(e.target.value)}
+                    placeholder={isReadingNumber ? "Lecture..." : "ex: 123/217"}
+                    className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-emerald-400 focus:outline-none placeholder-slate-600 transition"
+                  />
+
+                  {detectedNumber && (
+                    <button
+                      onClick={handleCopyNumber}
+                      title="Copier le numéro"
+                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95"
+                    >
+                      {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => readCardNumber(lastWarpedCanvasRef.current)}
+                    disabled={isReadingNumber}
+                    title="Relancer la détection OCR"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isReadingNumber ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Sélecteur de Rendu : Amélioration Auto HD vs Brut */}

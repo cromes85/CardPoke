@@ -8,12 +8,8 @@ import {
   AlertCircle,
   Maximize2,
   Camera,
-  ChevronUp,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Sliders,
-  RotateCcw
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import {
   autoDetectCardEdges,
@@ -22,12 +18,12 @@ import {
   POKEMON_RATIO
 } from '../utils/cardEdgeDetector';
 
-// Coordonnées physiques exactes de la carte au millimètre dans le support 3D
-const DEFAULT_3D_CORNERS = [
-  { x: 0.276, y: 0.474 }, // TL : Haut-Gauche
-  { x: 0.536, y: 0.474 }, // TR : Haut-Droit
-  { x: 0.536, y: 0.614 }, // BR : Bas-Droit
-  { x: 0.276, y: 0.614 }  // BL : Bas-Gauche
+// Coordonnées d'usine étalonnées pour la Tour 3D
+const STAND_3D_CORNERS = [
+  { x: 0.268, y: 0.480 }, // TL
+  { x: 0.538, y: 0.480 }, // TR
+  { x: 0.538, y: 0.690 }, // BR
+  { x: 0.268, y: 0.690 }  // BL
 ];
 
 export default function BorderDetectionCamera() {
@@ -36,9 +32,8 @@ export default function BorderDetectionCamera() {
   const animFrameRef = useRef(null);
   const trackerRef = useRef(new RobustCardTracker());
   const fileInputRef = useRef(null);
-  const svgRef = useRef(null);
 
-  // Mode de Détection : 'stand' (Tour 3D Calibrée) | 'auto' (Table / Libre)
+  // Mode de Détection : 'stand' (Tour/Support 3D) | 'auto' (Table / Libre)
   const [scanMode, setScanMode] = useState('stand');
 
   // États Caméra & Matériel
@@ -49,23 +44,10 @@ export default function BorderDetectionCamera() {
   const [videoDevices, setVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
 
-  // Panneau d'Ajustement Fin
-  const [showNudgePanel, setShowNudgePanel] = useState(false);
-
-  // Coins de Détection (avec mémorisation localStorage)
-  const [corners, setCorners] = useState(() => {
-    try {
-      const saved = localStorage.getItem('cardpoke_stand_corners_v3');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return DEFAULT_3D_CORNERS;
-  });
-
+  // Résultat de Détection
+  const [corners, setCorners] = useState(STAND_3D_CORNERS);
   const [isLocked, setIsLocked] = useState(true);
   const [fps, setFps] = useState(0);
-
-  // Drag & drop tactile d'un coin
-  const [activeDragCorner, setActiveDragCorner] = useState(null);
 
   // Extraction & Vérification
   const [capturedWarpedImage, setCapturedWarpedImage] = useState(null);
@@ -159,50 +141,7 @@ export default function BorderDetectionCamera() {
     startCamera(nextDev.deviceId);
   };
 
-  // 4. Micro-ajustement D-Pad & Sauvegarde
-  const nudgeCorners = (dx, dy) => {
-    setCorners(prev => {
-      const next = prev.map(p => ({
-        x: Math.max(0, Math.min(1, Number((p.x + dx).toFixed(4)))),
-        y: Math.max(0, Math.min(1, Number((p.y + dy).toFixed(4))))
-      }));
-      try {
-        localStorage.setItem('cardpoke_stand_corners_v3', JSON.stringify(next));
-      } catch (e) {}
-      return next;
-    });
-  };
-
-  const resetToFactoryCorners = () => {
-    setCorners(DEFAULT_3D_CORNERS);
-    try {
-      localStorage.setItem('cardpoke_stand_corners_v3', JSON.stringify(DEFAULT_3D_CORNERS));
-    } catch (e) {}
-  };
-
-  // 5. Glisser-déposer tactile sur les pastilles
-  const handleTouchMove = (e) => {
-    if (activeDragCorner === null || !svgRef.current) return;
-    const touch = e.touches ? e.touches[0] : e;
-    const rect = svgRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
-    const y = Math.max(0, Math.min(1, (touch.clientY - rect.top) / rect.height));
-
-    setCorners(prev => {
-      const next = [...prev];
-      next[activeDragCorner] = { x: Number(x.toFixed(4)), y: Number(y.toFixed(4)) };
-      try {
-        localStorage.setItem('cardpoke_stand_corners_v3', JSON.stringify(next));
-      } catch (err) {}
-      return next;
-    });
-  };
-
-  const handleTouchEnd = () => {
-    setActiveDragCorner(null);
-  };
-
-  // 6. Boucle de Traitement Vidéo
+  // 4. Boucle de Traitement Vidéo
   useEffect(() => {
     let isRunning = true;
     const workCanvas = document.createElement('canvas');
@@ -220,8 +159,11 @@ export default function BorderDetectionCamera() {
       }
 
       if (scanMode === 'stand') {
+        // En mode Support 3D : cadrage automatique instantané au millimètre sur la goulotte
+        setCorners(STAND_3D_CORNERS);
         setIsLocked(true);
       } else if (timestamp - lastProcessTimeRef.current >= 35) {
+        // En mode Table / Libre : analyse par vision par ordinateur adaptative
         lastProcessTimeRef.current = timestamp;
 
         const video = videoRef.current;
@@ -269,7 +211,7 @@ export default function BorderDetectionCamera() {
     };
   }, [scanMode, cameraActive, staticImageSource]);
 
-  // 7. Charger une image de test
+  // 5. Charger une image de test
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -290,7 +232,7 @@ export default function BorderDetectionCamera() {
     reader.readAsDataURL(file);
   };
 
-  // 8. Figer & Extraire la carte redressée (630 x 880 px)
+  // 6. Figer & Extraire la carte redressée (630 x 880 px)
   const handleCaptureWarped = () => {
     if (!corners || corners.length !== 4) return;
 
@@ -326,13 +268,7 @@ export default function BorderDetectionCamera() {
   };
 
   return (
-    <div
-      className="relative w-full h-[100dvh] bg-slate-950 flex flex-col justify-between overflow-hidden select-none font-sans"
-      onMouseMove={activeDragCorner !== null ? handleTouchMove : undefined}
-      onMouseUp={activeDragCorner !== null ? handleTouchEnd : undefined}
-      onTouchMove={activeDragCorner !== null ? handleTouchMove : undefined}
-      onTouchEnd={activeDragCorner !== null ? handleTouchEnd : undefined}
-    >
+    <div className="relative w-full h-[100dvh] bg-slate-950 flex flex-col justify-between overflow-hidden select-none font-sans">
       
       {/* 1. Header Transparent Épuré avec Sélecteur de Mode */}
       <header className="relative z-30 flex items-center justify-between px-3.5 py-2.5 bg-slate-900/90 backdrop-blur-md border-b border-slate-800/80">
@@ -343,18 +279,15 @@ export default function BorderDetectionCamera() {
           <div>
             <h1 className="text-xs font-bold text-white tracking-wide">Détecteur Pokémon</h1>
             <p className="text-[10px] text-slate-400 font-mono">
-              {fps} FPS • {scanMode === 'stand' ? '🎯 Tour 3D Calibrée' : '📱 Table'}
+              {fps} FPS • {scanMode === 'stand' ? '🎯 Tour 3D' : '📱 Table'}
             </p>
           </div>
         </div>
 
-        {/* Sélecteur de mode : Tour 3D vs Table */}
+        {/* Sélecteur de mode 1-clic : Tour 3D vs Table */}
         <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] font-medium">
           <button
-            onClick={() => {
-              setScanMode('stand');
-              setIsLocked(true);
-            }}
+            onClick={() => setScanMode('stand')}
             className={`px-3 py-1 rounded-lg transition ${
               scanMode === 'stand'
                 ? 'bg-emerald-600 text-white font-bold shadow'
@@ -364,10 +297,7 @@ export default function BorderDetectionCamera() {
             🏗️ Tour 3D
           </button>
           <button
-            onClick={() => {
-              setScanMode('auto');
-              trackerRef.current.reset();
-            }}
+            onClick={() => setScanMode('auto')}
             className={`px-3 py-1 rounded-lg transition ${
               scanMode === 'auto'
                 ? 'bg-indigo-600 text-white font-bold shadow'
@@ -378,7 +308,7 @@ export default function BorderDetectionCamera() {
           </button>
         </div>
 
-        {/* Boutons d'actions rapides */}
+        {/* Boutons Flash & Switch Caméra */}
         <div className="flex items-center gap-1.5">
           {hasTorch && (
             <button
@@ -399,20 +329,6 @@ export default function BorderDetectionCamera() {
               className="p-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-          )}
-
-          {scanMode === 'stand' && (
-            <button
-              onClick={() => setShowNudgePanel(prev => !prev)}
-              className={`p-2 rounded-xl border transition ${
-                showNudgePanel
-                  ? 'bg-indigo-600 text-white border-indigo-500'
-                  : 'bg-slate-800 text-slate-300 border-slate-700'
-              }`}
-              title="Ajustement fin"
-            >
-              <Sliders className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
@@ -457,49 +373,32 @@ export default function BorderDetectionCamera() {
 
         {/* Calque de Traçage SVG Dynamique */}
         <svg
-          ref={svgRef}
-          className="absolute inset-0 w-full h-full z-10 select-none pointer-events-auto"
+          className="absolute inset-0 w-full h-full pointer-events-none z-10"
           viewBox="0 0 100 100"
           preserveAspectRatio="none"
         >
           {corners && (
             <>
-              {/* Polygone de bordure lumineuse couvrant l'intégralité de la carte */}
+              {/* Polygone de bordure lumineuse */}
               <polygon
                 points={getSvgPolygonPoints()}
-                className="fill-emerald-500/20 stroke-emerald-400 stroke-[1.4] drop-shadow-[0_0_12px_rgba(52,211,153,0.9)] transition-all duration-75 ease-out"
+                className="fill-emerald-500/20 stroke-emerald-400 stroke-[1.4] drop-shadow-[0_0_12px_rgba(52,211,153,0.9)] transition-all duration-100 ease-out"
               />
 
-              {/* Réticules aux 4 coins (TL, TR, BR, BL) avec poignées tactiles */}
+              {/* Réticules aux 4 coins (TL, TR, BR, BL) */}
               {corners.map((pt, idx) => {
                 const labels = ['TL', 'TR', 'BR', 'BL'];
                 const colors = ['#38bdf8', '#818cf8', '#34d399', '#f472b6'];
-                const isDragging = activeDragCorner === idx;
-
                 return (
-                  <g
-                    key={idx}
-                    className="cursor-pointer"
-                    onMouseDown={() => setActiveDragCorner(idx)}
-                    onTouchStart={() => setActiveDragCorner(idx)}
-                  >
-                    {/* Zone de touch agrandie invisible */}
+                  <g key={idx} className="transition-all duration-100 ease-out">
                     <circle
                       cx={pt.x * 100}
                       cy={pt.y * 100}
-                      r="8"
-                      fill="transparent"
-                    />
-
-                    {/* Réticule d'angle visible */}
-                    <circle
-                      cx={pt.x * 100}
-                      cy={pt.y * 100}
-                      r={isDragging ? '3.5' : '2.2'}
+                      r="2.2"
                       fill={colors[idx]}
                       stroke="#ffffff"
                       strokeWidth="0.6"
-                      className="drop-shadow-lg transition-all duration-75"
+                      className="drop-shadow-lg"
                     />
                     <text
                       x={pt.x * 100 + (idx === 0 || idx === 3 ? -3 : 3)}
@@ -521,61 +420,14 @@ export default function BorderDetectionCamera() {
 
         {/* Badge Viseur Flottant */}
         {isLocked && corners && (
-          <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between pointer-events-none">
+          <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-center pointer-events-none">
             <div className="bg-slate-900/90 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-emerald-500/40 text-xs font-mono text-emerald-300 flex items-center gap-2 shadow-xl">
               <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-              <span>4 Bords Cadrés (Intégral 63x88mm)</span>
+              <span>4 Bords Cadrés (63:88)</span>
             </div>
-
-            {scanMode === 'stand' && (
-              <button
-                onClick={resetToFactoryCorners}
-                className="pointer-events-auto bg-slate-900/90 hover:bg-slate-800 border border-slate-800 px-2.5 py-1 rounded-full text-[10px] text-slate-300 flex items-center gap-1 shadow transition"
-              >
-                <RotateCcw className="w-3 h-3" />
-                Réinitialiser
-              </button>
-            )}
           </div>
         )}
       </div>
-
-      {/* Panneau de Micro-Ajustement D-Pad (si ouvert) */}
-      {showNudgePanel && scanMode === 'stand' && (
-        <div className="relative z-30 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 px-4 py-2.5 flex items-center justify-between text-xs">
-          <span className="text-slate-300 font-medium">Ajustement millimétrique :</span>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => nudgeCorners(-0.003, 0)}
-              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 active:scale-95"
-              title="Décaler Gauche"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => nudgeCorners(0, -0.003)}
-              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 active:scale-95"
-              title="Décaler Haut"
-            >
-              <ChevronUp className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => nudgeCorners(0, 0.003)}
-              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 active:scale-95"
-              title="Décaler Bas"
-            >
-              <ChevronDown className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => nudgeCorners(0.003, 0)}
-              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 active:scale-95"
-              title="Décaler Droite"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* 3. Barre de Contrôles Inférieure */}
       <footer className="relative z-30 px-4 py-3 bg-slate-950 border-t border-slate-900 flex items-center justify-between gap-3">

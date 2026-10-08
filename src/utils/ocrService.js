@@ -1,5 +1,5 @@
 import { createWorker } from 'tesseract.js';
-import { extractAndPreprocessRoi } from './cardDetection.js';
+import { extractAndPreprocessRoi, preprocessHeaderCanvasForOcr } from './cardDetection.js';
 
 const STOP_WORDS = new Set([
   'base', 'basic', 'niveau', 'stage', 'dresseur', 'trainer', 'supporter', 'stade', 'stadium', 'item', 'objet', 'talent', 'ability',
@@ -265,10 +265,12 @@ class OcrService {
     if (!headerCanvas) return null;
     try {
       const worker = await this.getWorker();
-      const res = await worker.recognize(headerCanvas);
+      // Preprocess header with adaptive binarization & auto-polarity
+      const processed = preprocessHeaderCanvasForOcr(headerCanvas);
+      const res = await worker.recognize(processed);
       const text = res?.data?.text || '';
 
-      // 1. Extract HP / PV (e.g., 60 PV, 120 HP, 330 PC)
+      // 1. Extract HP / PV (e.g., 60 PV, 120 HP, 70 PV, 330 PC)
       let hp = '';
       const hpMatch = text.match(/\b(\d{2,3})\s*(?:PV|HP|PC|P\/V|H\/P)\b/i) || text.match(/(?:PV|HP|PC)\s*[:\s]*(\d{2,3})\b/i);
       if (hpMatch) {
@@ -310,7 +312,7 @@ class OcrService {
       if (!name) {
         const words = (text.match(/[A-Za-zÀ-ÿ]{3,}/g) || [])
           .map(w => cleanWord(w))
-          .filter(w => w.length >= 3 && !STOP_WORDS.has(w.toLowerCase()) && !/^(png|jpg|jpeg|webp|media|img|niveau|basic|base|pv|hp|pc|evolution|terhal|fantominus)$/i.test(w));
+          .filter(w => w.length >= 3 && !STOP_WORDS.has(w.toLowerCase()) && !/^(png|jpg|jpeg|webp|media|img|niveau|basic|base|pv|hp|pc|evolution)$/i.test(w));
         for (const w of words) {
           const fuzzy = findFuzzyMatch(w);
           if (fuzzy) {
@@ -415,7 +417,22 @@ function cleanWord(str) {
     'amos de la team rocker': 'Amos de la Team Rocket',
     'amos de la team rocket': 'Amos de la Team Rocket',
     'sucroguin': 'Sucroquin',
-    'fantomlnus': 'Fantominus'
+    'fantomlnus': 'Fantominus',
+    'fantominvs': 'Fantominus',
+    'fant0minus': 'Fantominus',
+    'fantominus': 'Fantominus',
+    'fantominos': 'Fantominus',
+    'fantorninus': 'Fantominus',
+    'terhal': 'Terhal',
+    'métang': 'Métang',
+    'metang': 'Métang',
+    'métalosse': 'Métalosse',
+    'metagross': 'Métalosse',
+    'spectrum': 'Spectrum',
+    'haunter': 'Spectrum',
+    'ectoplasma': 'Ectoplasma',
+    'gengar': 'Ectoplasma',
+    'gastly': 'Fantominus'
   };
 
   const lower = clean.toLowerCase();
@@ -430,15 +447,18 @@ function cleanWord(str) {
 
 function findFuzzyMatch(str) {
   if (!str || str.length < 3) return null;
-  const sLower = str.toLowerCase();
+  const sLower = str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
   for (const name of COMMON_NAMES) {
     const nLower = name.toLowerCase();
-    if (sLower === nLower) return name;
-    if (nLower.startsWith(sLower) || sLower.startsWith(nLower)) return name;
+    const nNorm = nLower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-    if (!nLower.includes(' ') && !sLower.includes(' ') && Math.abs(nLower.length - sLower.length) <= 2) {
-      if (levenshteinDistance(sLower, nLower) <= 2) {
+    if (sLower === nNorm || sLower === nLower) return name;
+    if (nNorm.startsWith(sLower) || sLower.startsWith(nNorm)) return name;
+
+    const maxDist = nNorm.length >= 8 ? 3 : 2;
+    if (!nNorm.includes(' ') && !sLower.includes(' ') && Math.abs(nNorm.length - sLower.length) <= maxDist) {
+      if (levenshteinDistance(sLower, nNorm) <= maxDist) {
         return name;
       }
     }

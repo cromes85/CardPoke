@@ -428,13 +428,13 @@ export default function Scanner({
         } catch (e) {}
       }
 
-      // 2. In Support 3D & default mode: Extract top 20% of the Zoomed ROI (matching the framed card perfectly)
+      // 2. In Support 3D & default mode: Extract top 22% of the Zoomed ROI (matching the framed card perfectly)
       if (!headerCanvas) {
         const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
-        const headerW = Math.min(vw - cropX - 5, Math.floor(cropW * 0.94));
-        const headerH = Math.min(vh - cropY - 5, Math.floor(cropH * 0.20));
-        const headerX = Math.min(vw - headerW, Math.floor(cropX + cropW * 0.03));
-        const headerY = Math.min(vh - headerH, Math.floor(cropY + cropH * 0.01));
+        const headerW = Math.min(vw - cropX, Math.floor(cropW * 0.96));
+        const headerH = Math.min(vh - cropY, Math.floor(cropH * 0.22));
+        const headerX = Math.max(0, Math.min(vw - headerW, Math.floor(cropX + cropW * 0.02)));
+        const headerY = Math.max(0, Math.min(vh - headerH, Math.floor(cropY)));
 
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = headerW;
@@ -448,8 +448,7 @@ export default function Scanner({
         isLiveScanningRef.current = true;
         setLiveHeaderScan(prev => ({ ...prev, isSearching: true }));
 
-        const enhanced = autoEnhanceLighting(headerCanvas, 0.9);
-        const res = await ocrService.scanHeaderLive(enhanced);
+        const res = await ocrService.scanHeaderLive(headerCanvas);
 
         if (res && (res.name || res.hp)) {
           setLiveHeaderScan({

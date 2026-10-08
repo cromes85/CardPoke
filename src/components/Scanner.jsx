@@ -207,7 +207,12 @@ export default function Scanner({
     const p3 = { x: (relative[2].x * 100).toFixed(1), y: (relative[2].y * 100).toFixed(1) };
     const p4 = { x: (relative[3].x * 100).toFixed(1), y: (relative[3].y * 100).toFixed(1) };
 
-    const text = `📐 Coordonnées du Viseur (${scanMode === 'batch3d' ? 'Support 3D' : 'Mode Bouton'}) :\n` +
+    const text = `📐 Coordonnées Actuelles du Cadrage :\n` +
+                 `• Mode : ${scanMode === 'batch3d' ? 'Support 3D' : scanMode === 'button' ? 'Mode Bouton' : 'À la volée'}\n` +
+                 `• Zoom : ${zoom.toFixed(1)}x\n` +
+                 `• Décalage X : ${(offsetX >= 0 ? '+' : '') + Math.round(offsetX * 100)}%\n` +
+                 `• Décalage Y : ${(offsetY >= 0 ? '+' : '') + Math.round(offsetY * 100)}%\n\n` +
+                 `• 4 Coins du Cadrage :\n` +
                  `1. Haut-Gauche (TL) : X=${p1.x}%, Y=${p1.y}%\n` +
                  `2. Haut-Droit  (TR) : X=${p2.x}%, Y=${p2.y}%\n` +
                  `3. Bas-Droit   (BR) : X=${p3.x}%, Y=${p3.y}%\n` +
@@ -216,6 +221,7 @@ export default function Scanner({
 
     if (navigator.clipboard) {
       navigator.clipboard.writeText(text);
+      soundManager.playCoinDing();
       setCopiedViewfinderCoords(true);
       setTimeout(() => setCopiedViewfinderCoords(false), 2500);
     }
@@ -1570,6 +1576,59 @@ export default function Scanner({
           </div>
         )}
       </div>
+
+      {/* Persistent Live Framing Position HUD & 1-Click Copy / Calibration Bar */}
+      {hasCamera && !cameraError && (
+        <div className="w-full mt-2.5 bg-slate-900/95 border border-slate-800 rounded-2xl p-2.5 sm:p-3 flex flex-col sm:flex-row items-center justify-between gap-2 shadow-lg backdrop-blur-md">
+          <div className="flex items-center gap-1.5 flex-wrap text-xs">
+            <span className="font-black text-slate-300 flex items-center gap-1">
+              <Crosshair className="w-3.5 h-3.5 text-amber-400" />
+              <span>Position du Cadre :</span>
+            </span>
+            <span className="px-2 py-0.5 rounded-lg bg-slate-950 text-amber-400 font-mono font-bold border border-slate-800 text-[11px]">
+              Zoom: {zoom.toFixed(1)}x
+            </span>
+            <span className="px-2 py-0.5 rounded-lg bg-slate-950 text-cyan-300 font-mono font-bold border border-slate-800 text-[11px]">
+              X: {(offsetX >= 0 ? '+' : '') + Math.round(offsetX * 100)}%
+            </span>
+            <span className="px-2 py-0.5 rounded-lg bg-slate-950 text-rose-300 font-mono font-bold border border-slate-800 text-[11px]">
+              Y: {(offsetY >= 0 ? '+' : '') + Math.round(offsetY * 100)}%
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 w-full sm:w-auto">
+            <button
+              onClick={handleCopyViewfinderCoords}
+              title="Copier les coordonnées exactes pour les envoyer à l'assistant"
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl font-bold text-xs shadow-md transition-all active:scale-95 ${
+                copiedViewfinderCoords
+                  ? 'bg-emerald-600 text-white animate-bounce'
+                  : 'bg-blue-600 hover:bg-blue-500 text-white'
+              }`}
+            >
+              {copiedViewfinderCoords ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedViewfinderCoords ? '✅ Position Copiée !' : '📋 Copier Position Finale'}</span>
+            </button>
+
+            <button
+              onClick={handleOpenCalibrationCrop}
+              title="Prendre une photo fixe et ajuster les 4 coins au doigt"
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:opacity-95 text-white font-bold text-xs shadow-md transition-all active:scale-95"
+            >
+              <Crop className="w-3.5 h-3.5" />
+              <span>🎯 Calibrer 4 Coins</span>
+            </button>
+
+            <button
+              onClick={() => handleSetCalibration(1.0, 0.0, 0.0)}
+              title="Revenir à la vue de départ sans zoom (1.0x)"
+              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold border border-slate-700 transition-colors"
+            >
+              1.0x Base
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Control Bar */}
       <div className="w-full mt-3 sm:mt-4">

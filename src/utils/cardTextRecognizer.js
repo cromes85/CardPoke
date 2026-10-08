@@ -1,38 +1,9 @@
 import { createWorker } from 'tesseract.js';
+import POKEMON_NAMES_FR from './pokemonNamesFr.json';
 
 let cachedWorker = null;
 let isInitializing = false;
 let initPromise = null;
-
-// Dictionnaire étendu des Pokémon français (Génération 1 à 9 + populaires)
-const POKEMON_NAMES_FR = [
-  'Macronium', 'Germignon', 'Méganium', 'Fantominus', 'Spectrum', 'Ectoplasma',
-  'Sucroquin', 'Cupcanaille', 'Pikachu', 'Raichu', 'Salamèche', 'Reptincel', 'Dracaufeu',
-  'Bulbizarre', 'Herbizarre', 'Florizarre', 'Carapuce', 'Carabaffe', 'Tortank',
-  'Chenipan', 'Chrysacier', 'Papilusion', 'Roucool', 'Roucoups', 'Roucarnage',
-  'Rattata', 'Rattatac', 'Piafabec', 'Rapasdepic', 'Abo', 'Arbok', 'Pikachu',
-  'Sabelette', 'Sablaireau', 'Nidoran', 'Nidorina', 'Nidoqueen', 'Nidorino', 'Nidoking',
-  'Mélofée', 'Mélodelfe', 'Goupix', 'Feunard', 'Rondoudou', 'Grodoudou',
-  'Nosferapti', 'Nosferalto', 'Mystherbe', 'Ortide', 'Rafflesia', 'Paras', 'Parasect',
-  'Mimitoss', 'Aéromite', 'Taupiqueur', 'Triopikeur', 'Miaouss', 'Persian',
-  'Psykokwak', 'Akwakwak', 'Férosinge', 'Colossinge', 'Caninos', 'Arcanin',
-  'Ptitard', 'Têtarte', 'Tartard', 'Abra', 'Kadabra', 'Alakazam', 'Machoc', 'Machopeur', 'Mackogneur',
-  'Chétiflor', 'Boustiflor', 'Empiflor', 'Tentacool', 'Tentacruel', 'Racaillou', 'Gravalanch', 'Grolem',
-  'Ponyta', 'Galopa', 'Ramoloss', 'Flagadoss', 'Magnéti', 'Magnéton', 'Canarticho',
-  'Doduo', 'Dodrio', 'Otaria', 'Lamantine', 'Tadmorv', 'Grotadmorv', 'Kokiyas', 'Crustabri',
-  'Soporifik', 'Hypnomade', 'Krabby', 'Krabboss', 'Voltorbe', 'Électrode', 'Nœunœuf', 'Noadkoko',
-  'Osselait', 'Ossatueur', 'Kicklee', 'Tygnon', 'Excelangue', 'Smogo', 'Smogogo', 'Rhinocorne', 'Rhinoféros',
-  'Leveinard', 'Saquedeneu', 'Kangourex', 'Hypotrempe', 'Hypocéan', 'Poissirène', 'Poissoroy',
-  'Stari', 'Staross', 'M. Mime', 'Insécateur', 'Lippoutou', 'Élektek', 'Magmar', 'Scarabrute',
-  'Tauros', 'Magicarpe', 'Léviator', 'Lokhlass', 'Métamorph', 'Évoli', 'Aquali', 'Voltali', 'Pyroli',
-  'Porygon', 'Amonita', 'Amonistar', 'Kabuto', 'Kabutops', 'Ptéra', 'Ronflex', 'Artikodin', 'Électhor', 'Sulfura',
-  'Minidraco', 'Draco', 'Dracolosse', 'Mewtwo', 'Mew',
-  'Héricendre', 'Feurisson', 'Typhlosion', 'Kaiminus', 'Crocrodil', 'Aligatueur',
-  'Mentali', 'Noctali', 'Phyllali', 'Givrali', 'Nymphali',
-  'Lucario', 'Riolu', 'Draby', 'Drackhaus', 'Drattak', 'Griknot', 'Carmache', 'Carchacrok',
-  'Rayquaza', 'Kyogre', 'Groudon', 'Dialga', 'Palkia', 'Giratina', 'Arceus', 'Zeraora', 'Zacian', 'Zamazenta',
-  'Koraidon', 'Miraidon', 'Miascaron', 'Flâmigator', 'Palmaval', 'Oyacata', 'Pohm', 'Pohmotte', 'Pohmarmotte'
-];
 
 /**
  * Initialise le worker Tesseract avec gestion d'erreurs et fallback
@@ -49,7 +20,7 @@ async function getOCRWorker() {
     try {
       const worker = await createWorker('fra+eng');
       await worker.setParameters({
-        tessedit_char_whitelist: '0123456789/ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzéèêàùâôîïç.-PV',
+        tessedit_char_whitelist: '0123456789/ ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzéèêëàùûüâôîïç.-PV',
         tessedit_pageseg_mode: '6'
       });
       cachedWorker = worker;
@@ -120,7 +91,7 @@ function preprocessCanvasForOCR(sourceCanvas, isDarkCard = false, highSharpen = 
 }
 
 /**
- * Découpe les zones d'intérêt de la carte (En-tête Nom/PV et Bas de carte Numéro)
+ * Découpe les zones d'intérêt de la carte : En-tête, Attaques et Bas de carte
  */
 export function extractCardZones(cardCanvas) {
   if (!cardCanvas) return null;
@@ -141,7 +112,20 @@ export function extractCardZones(cardCanvas) {
   hCtx.imageSmoothingEnabled = true;
   hCtx.drawImage(cardCanvas, hX, hY, hW, hH, 0, 0, hW * 2, hH * 2);
 
-  // 2. Zone Bas de Carte Complète (Numéro gauche ou droite) : X: 2.5% à 97%, Y: 89.5% à 98.8%
+  // 2. Zone Corps / Attaques : X: 5% à 95%, Y: 50% à 88%
+  const bX = Math.round(cw * 0.05);
+  const bY = Math.round(ch * 0.500);
+  const bW = Math.round(cw * 0.90);
+  const bH = Math.round(ch * 0.380);
+
+  const bodyCanvas = document.createElement('canvas');
+  bodyCanvas.width = bW * 2;
+  bodyCanvas.height = bH * 2;
+  const bCtx = bodyCanvas.getContext('2d');
+  bCtx.imageSmoothingEnabled = true;
+  bCtx.drawImage(cardCanvas, bX, bY, bW, bH, 0, 0, bW * 2, bH * 2);
+
+  // 3. Zone Bas de Carte Complète (Numéro gauche ou droite) : X: 2.5% à 97%, Y: 89.5% à 98.8%
   const fX = Math.round(cw * 0.025);
   const fY = Math.round(ch * 0.895);
   const fW = Math.round(cw * 0.95);
@@ -154,7 +138,7 @@ export function extractCardZones(cardCanvas) {
   fCtx.imageSmoothingEnabled = true;
   fCtx.drawImage(cardCanvas, fX, fY, fW, fH, 0, 0, fW * 3, fH * 3);
 
-  // 3. Zone Spécifique Bas-Gauche (Numéro SV / Epée & Bouclier) : X: 2.5% à 50%
+  // 4. Zone Spécifique Bas-Gauche (Numéro SV / Epée & Bouclier) : X: 2.5% à 50%
   const fLeftW = Math.round(cw * 0.48);
   const footerLeftCanvas = document.createElement('canvas');
   footerLeftCanvas.width = fLeftW * 4;
@@ -173,15 +157,42 @@ export function extractCardZones(cardCanvas) {
 
   return {
     headerCanvas,
+    bodyCanvas,
     footerCanvas,
     footerLeftCanvas,
     cleanedHeader: preprocessCanvasForOCR(headerCanvas, isDarkCard),
+    cleanedBody: preprocessCanvasForOCR(bodyCanvas, isDarkCard),
     cleanedFooter: preprocessCanvasForOCR(footerCanvas, isDarkCard, true),
     cleanedFooterLeft: preprocessCanvasForOCR(footerLeftCanvas, isDarkCard, true),
     headerPreview: headerCanvas.toDataURL('image/jpeg', 0.90),
     footerPreview: footerLeftCanvas.toDataURL('image/jpeg', 0.92),
     isDarkCard
   };
+}
+
+/**
+ * Nettoie et extrait le nom canonique du Pokémon à partir de la lecture OCR
+ */
+export function cleanPokemonName(raw) {
+  if (!raw) return '';
+  let cleaned = raw
+    .replace(/\b(?:BASE|NIVEAU\s*[12]|STAGE\s*[12]|ÉVOLUTION|EVOLUTION|PV|HP|\d+)\b/gi, ' ')
+    .replace(/[^a-zA-Zàâéèêëîïôùûüç\s-]/g, ' ')
+    .trim();
+
+  const words = cleaned.split(/\s+/).filter(w => w.length >= 3);
+  for (const w of words) {
+    const exact = POKEMON_NAMES_FR.find(n => n.toLowerCase() === w.toLowerCase());
+    if (exact) return exact;
+  }
+
+  for (const n of POKEMON_NAMES_FR) {
+    if (n.length >= 4 && cleaned.toLowerCase().includes(n.toLowerCase())) {
+      return n;
+    }
+  }
+
+  return words.sort((a, b) => b.length - a.length)[0] || cleaned;
 }
 
 /**
@@ -219,21 +230,22 @@ function parsePokemonCardNumber(text) {
 }
 
 /**
- * Analyse & Extrait les informations de la carte (Nom, PV, Numéro)
+ * Analyse & Extrait les informations de la carte (Nom, PV, Attaques, Numéro)
  */
 export async function recognizeCardInfo(cardCanvas) {
   if (!cardCanvas) {
-    return { name: '', hp: '', number: '', headerPreview: null, footerPreview: null };
+    return { name: '', hp: '', number: '', bodyText: '', headerPreview: null, footerPreview: null };
   }
 
   const zones = extractCardZones(cardCanvas);
   if (!zones) {
-    return { name: '', hp: '', number: '', headerPreview: null, footerPreview: null };
+    return { name: '', hp: '', number: '', bodyText: '', headerPreview: null, footerPreview: null };
   }
 
   let extractedName = '';
   let extractedHP = '';
   let extractedNumber = '';
+  let extractedBody = '';
 
   try {
     const worker = await getOCRWorker();
@@ -242,6 +254,7 @@ export async function recognizeCardInfo(cardCanvas) {
         name: '',
         hp: '',
         number: '',
+        bodyText: '',
         headerPreview: zones.headerPreview,
         footerPreview: zones.footerPreview
       };
@@ -261,30 +274,25 @@ export async function recognizeCardInfo(cardCanvas) {
       }
     }
 
-    // Extraction Nom avec nettoyage
-    let rawName = headerText
-      .replace(/(?:BASE|NIVEAU\s*[12]|STAGE\s*[12]|PV|HP|\d+).*$/is, '')
-      .replace(/[^a-zA-Zàâéèêëîïôùûüç\s-]/g, '')
-      .trim();
+    // Extraction Nom avec nettoyage Pokédex
+    extractedName = cleanPokemonName(headerText);
 
-    // Recherche de correspondance dans le Pokédex Français
-    if (rawName.length >= 3) {
-      const match = POKEMON_NAMES_FR.find(p =>
-        rawName.toLowerCase().includes(p.toLowerCase()) ||
-        p.toLowerCase().includes(rawName.toLowerCase())
-      );
-      extractedName = match || rawName;
-    } else {
-      extractedName = rawName;
+    // 2. Lecture OCR du Corps / Attaques
+    try {
+      const bodyDataUrl = zones.cleanedBody.toDataURL('image/png');
+      const bodyRes = await worker.recognize(bodyDataUrl);
+      extractedBody = bodyRes.data?.text || '';
+    } catch (bErr) {
+      console.warn('Erreur lecture zone attaques:', bErr);
     }
 
-    // 2. Lecture OCR du Bas de Carte - Passe 1 : Zone Bas-Gauche Haute Définition (4x)
+    // 3. Lecture OCR du Bas de Carte - Passe 1 : Zone Bas-Gauche Haute Définition (4x)
     const footerLeftDataUrl = zones.cleanedFooterLeft.toDataURL('image/png');
     const footerLeftRes = await worker.recognize(footerLeftDataUrl);
     const footerLeftText = footerLeftRes.data?.text || '';
     extractedNumber = parsePokemonCardNumber(footerLeftText);
 
-    // 3. Passe 2 si non trouvé : Zone Bas Complète
+    // 4. Passe 2 si non trouvé : Zone Bas Complète
     if (!extractedNumber) {
       const footerDataUrl = zones.cleanedFooter.toDataURL('image/png');
       const footerRes = await worker.recognize(footerDataUrl);
@@ -300,8 +308,10 @@ export async function recognizeCardInfo(cardCanvas) {
     name: extractedName,
     hp: extractedHP,
     number: extractedNumber,
+    bodyText: extractedBody,
     headerPreview: zones.headerPreview,
     footerPreview: zones.footerPreview
   };
 }
+
 

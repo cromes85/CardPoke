@@ -351,7 +351,7 @@ export default function BorderDetectionCamera() {
     }
   };
 
-  // Lecture OCR Automatique Complète (Nom, PV, Numéro de Carte) + Requête TCGdex
+  // Lecture OCR Automatique Complète (Nom, PV, Attaques, Numéro) + Requête Intelligente TCGdex
   const readAllCardInfo = async (canvas) => {
     if (!canvas) return;
     setIsReadingOCR(true);
@@ -363,7 +363,7 @@ export default function BorderDetectionCamera() {
     setDetectedNumber('');
 
     try {
-      // 1. OCR multi-zones
+      // 1. OCR multi-zones (En-tête, Attaques, Numéro)
       const res = await recognizeCardInfo(canvas);
       if (res.name) setDetectedName(res.name);
       if (res.hp) setDetectedHP(res.hp);
@@ -372,21 +372,19 @@ export default function BorderDetectionCamera() {
       if (res.footerPreview) setFooterCropPreview(res.footerPreview);
       setIsReadingOCR(false);
 
-      // 2. Recherche Base de données Pokémon TCGdex
+      // 2. Recherche Base de données Pokémon TCGdex avec scoring multi-critères
       const searchName = res.name;
       if (searchName && searchName.trim().length >= 2) {
-        const matches = await searchPokemonCard(searchName, res.hp, res.number);
+        const matches = await searchPokemonCard(searchName, res.hp, res.number, res.bodyText);
         setCandidateCards(matches || []);
 
         if (matches && matches.length > 0) {
           const topMatch = matches[0];
-          const details = await getCardDetails(topMatch.id);
-          if (details) {
-            setSelectedCardDetails(details);
-            // Si le numéro lu par OCR était vide, utiliser le numéro vérifié de l'API
-            if (!res.number || res.number.length < 3) {
-              setDetectedNumber(details.number);
-            }
+          setSelectedCardDetails(topMatch);
+          // Remplissage automatique garanti du numéro officiel vérifié
+          setDetectedNumber(topMatch.formattedNumber || topMatch.number);
+          if (topMatch.name && topMatch.name !== searchName) {
+            setDetectedName(topMatch.name);
           }
         }
       }
@@ -398,21 +396,12 @@ export default function BorderDetectionCamera() {
     }
   };
 
-  const handleSelectCandidate = async (candidate) => {
-    setIsSearchingAPI(true);
-    try {
-      const details = await getCardDetails(candidate.id);
-      if (details) {
-        setSelectedCardDetails(details);
-        setDetectedNumber(details.number);
-        if (details.name) setDetectedName(details.name);
-        if (details.hp) setDetectedHP(details.hp);
-      }
-    } catch (err) {
-      console.warn('Erreur sélection candidat:', err);
-    } finally {
-      setIsSearchingAPI(false);
-    }
+  const handleSelectCandidate = (candidate) => {
+    if (!candidate) return;
+    setSelectedCardDetails(candidate);
+    setDetectedNumber(candidate.formattedNumber || candidate.number);
+    if (candidate.name) setDetectedName(candidate.name);
+    if (candidate.hp && !detectedHP) setDetectedHP(candidate.hp);
   };
 
   const handleManualSearch = async () => {
@@ -422,13 +411,9 @@ export default function BorderDetectionCamera() {
       const matches = await searchPokemonCard(detectedName.trim(), detectedHP, detectedNumber);
       setCandidateCards(matches || []);
       if (matches && matches.length > 0) {
-        const details = await getCardDetails(matches[0].id);
-        if (details) {
-          setSelectedCardDetails(details);
-          if (!detectedNumber) {
-            setDetectedNumber(details.number);
-          }
-        }
+        const topMatch = matches[0];
+        setSelectedCardDetails(topMatch);
+        setDetectedNumber(topMatch.formattedNumber || topMatch.number);
       }
     } catch (err) {
       console.warn('Erreur recherche manuelle:', err);
@@ -1033,24 +1018,29 @@ export default function BorderDetectionCamera() {
                   </span>
                 </div>
 
-                {/* Variantes / Séries Disponibles */}
+                {/* Variantes & Extensions Disponibles */}
                 {candidateCards.length > 1 && (
-                  <div className="flex flex-col gap-1 pt-1">
-                    <span className="text-[9px] text-slate-400 font-medium">Autres extensions trouvées :</span>
-                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
-                      {candidateCards.slice(0, 4).map((c) => (
-                        <button
-                          key={c.id}
-                          onClick={() => handleSelectCandidate(c)}
-                          className={`text-[9px] px-2 py-0.5 rounded-lg border font-mono transition ${
-                            selectedCardDetails.id === c.id
-                              ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow'
-                              : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800'
-                          }`}
-                        >
-                          N° {c.localId}
-                        </button>
-                      ))}
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    <span className="text-[9px] text-slate-400 font-medium">Versions & Extensions trouvées :</span>
+                    <div className="flex flex-col gap-1 max-h-28 overflow-y-auto pr-1">
+                      {candidateCards.slice(0, 5).map((c) => {
+                        const isSelected = selectedCardDetails?.id === c.id;
+                        return (
+                          <button
+                            key={c.id}
+                            onClick={() => handleSelectCandidate(c)}
+                            className={`text-[10px] px-2.5 py-1 rounded-lg border text-left flex items-center justify-between transition ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white font-bold border-indigo-400 shadow'
+                                : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800'
+                            }`}
+                          >
+                            <span className="truncate flex-1 font-semibold">{c.setName}</span>
+                            <span className="font-mono text-emerald-300 ml-2 font-bold">{c.formattedNumber || c.number}</span>
+                            {c.hp && <span className="text-amber-300 ml-1.5 text-[9px] font-mono">{c.hp}</span>}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

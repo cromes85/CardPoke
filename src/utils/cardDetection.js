@@ -120,12 +120,13 @@ export function detectLiveCardQuad(source, prevCorners = null, options = {}) {
             const ratio = Math.min(avgW, avgH) / Math.max(avgW, avgH);
             const ratioDiff = Math.abs(ratio - targetAspect);
 
-            if (ratioDiff < 0.28) {
+            if (ratioDiff < 0.22) {
               const score = (area / totalFrameArea) * (1 - ratioDiff * 2);
-              if (score > bestScore) {
+              // Strict convexity & orientation check
+              if (score > bestScore && isStrictConvexQuad(ordered, sw, sh)) {
                 bestScore = score;
                 detectedRaw = ordered;
-                confidence = Math.min(0.98, Math.max(0.4, 1.0 - ratioDiff * 1.8));
+                confidence = Math.min(0.98, Math.max(0.5, 1.0 - ratioDiff * 1.8));
               }
             }
           }
@@ -149,7 +150,7 @@ export function detectLiveCardQuad(source, prevCorners = null, options = {}) {
   if (!detectedRaw) {
     try {
       const jsResult = detectCardCornersPureJS(canvas);
-      if (jsResult && jsResult.length === 4) {
+      if (jsResult && jsResult.length === 4 && isStrictConvexQuad(jsResult, sw, sh)) {
         detectedRaw = jsResult.map(pt => ({
           x: pt.x / scale,
           y: pt.y / scale
@@ -216,6 +217,36 @@ export function detectLiveCardQuad(source, prevCorners = null, options = {}) {
     confidence,
     isStable
   };
+}
+
+/**
+ * Validates that 4 points form a strictly convex, non-self-intersecting quadrilateral of significant size
+ */
+export function isStrictConvexQuad(pts, frameW, frameH) {
+  if (!pts || pts.length !== 4) return false;
+  const [p0, p1, p2, p3] = pts;
+
+  // 1. Cross products must all have the same non-zero sign (strict convexity, no self-intersection/bow-tie)
+  const cross = (a, b, c) => (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+  const c0 = cross(p3, p0, p1);
+  const c1 = cross(p0, p1, p2);
+  const c2 = cross(p1, p2, p3);
+  const c3 = cross(p2, p3, p0);
+
+  const allPos = c0 > 0.01 && c1 > 0.01 && c2 > 0.01 && c3 > 0.01;
+  const allNeg = c0 < -0.01 && c1 < -0.01 && c2 < -0.01 && c3 < -0.01;
+  if (!allPos && !allNeg) return false;
+
+  // 2. Minimum area (at least 20% of frame area, to prevent detecting small internal buttons/icons/boxes)
+  const area = 0.5 * Math.abs((p0.x*p1.y + p1.x*p2.y + p2.x*p3.y + p3.x*p0.y) - (p0.y*p1.x + p1.y*p2.x + p2.y*p3.x + p3.y*p0.x));
+  const frameArea = frameW * frameH;
+  if (area < frameArea * 0.20 || area > frameArea * 0.98) return false;
+
+  // 3. Orientation sanity check: Top edge must be above bottom edge!
+  if (p0.y >= p3.y - 10 || p1.y >= p2.y - 10) return false;
+  if (p0.x >= p1.x - 10 || p3.x >= p2.x - 10) return false;
+
+  return true;
 }
 
 /**

@@ -347,9 +347,9 @@ export default function Scanner({
     return () => clearInterval(interval);
   }, [hasCamera, cameraError]);
 
-  // Real-Time Live Document / Card Quad Detection Loop (Android Document Scanner Mode)
+  // Real-Time Live Document / Card Quad Detection Loop (Only in Free Photo / Auto Modes, not in 3D Tower)
   useEffect(() => {
-    if (!hasCamera || cameraError || !isAutoDocMode) {
+    if (!hasCamera || cameraError || !isAutoDocMode || scanMode === 'batch3d') {
       setLiveQuad(null);
       liveQuadRef.current = null;
       prevQuadCornersRef.current = null;
@@ -364,25 +364,25 @@ export default function Scanner({
       if (!isRunning) return;
 
       const now = performance.now();
-      // Scan every ~70ms (~14 FPS) for smooth real-time tracking without lagging UI
-      if (now - lastScanTime >= 70 && videoRef.current && videoRef.current.readyState >= 2 && !isProcessing) {
+      // Scan every ~90ms (~11 FPS) for smooth real-time tracking
+      if (now - lastScanTime >= 90 && videoRef.current && videoRef.current.readyState >= 2 && !isProcessing) {
         lastScanTime = now;
         try {
           const video = videoRef.current;
           const quad = detectLiveCardQuad(video, prevQuadCornersRef.current, {
             targetAspect: CARD_ASPECT_RATIO,
-            minAreaPercent: 0.05,
+            minAreaPercent: 0.20,
             maxAreaPercent: 0.95
           });
 
-          if (quad) {
+          if (quad && quad.confidence > 0.75) {
             prevQuadCornersRef.current = quad.corners;
             liveQuadRef.current = quad;
             lastQuadSeenTimeRef.current = Date.now();
             setLiveQuad(quad);
           } else {
-            // Keep quad for ~500ms before fading out to prevent flickering
-            if (Date.now() - lastQuadSeenTimeRef.current > 500) {
+            // Keep quad for ~400ms before clearing
+            if (Date.now() - lastQuadSeenTimeRef.current > 400) {
               prevQuadCornersRef.current = null;
               liveQuadRef.current = null;
               setLiveQuad(null);
@@ -399,15 +399,15 @@ export default function Scanner({
       isRunning = false;
       cancelAnimationFrame(animId);
     };
-  }, [hasCamera, cameraError, isAutoDocMode, isProcessing]);
+  }, [hasCamera, cameraError, isAutoDocMode, scanMode, isProcessing]);
 
-  // Standby Real-Time Name & PV / HP Detection Loop (Cadre Bleu Dynamique sur Zone Détectée ou Zoomée)
+  // Standby Real-Time Name & PV / HP Detection Loop (Cadre Bleu : En haut de la carte)
   useEffect(() => {
     if (!hasCamera || cameraError || isProcessing) return;
 
     const interval = setInterval(async () => {
       if (!videoRef.current || videoRef.current.readyState < 2 || isProcessing || isLiveScanningRef.current) return;
-      if (scanMode === 'batch3d' && batchStatus === 'running') return; // 3D batch mode handles its own triggers
+      if (scanMode === 'batch3d' && batchStatus === 'running') return;
 
       const video = videoRef.current;
       const vw = video.videoWidth || 1280;
@@ -415,8 +415,8 @@ export default function Scanner({
 
       let headerCanvas = null;
 
-      // 1. If Live Document Quad is locked, extract the top header directly from the live card polygon!
-      if (isAutoDocMode && liveQuadRef.current && liveQuadRef.current.headerQuad) {
+      // 1. In Free Photo mode: If valid Live Document Quad is locked, extract top 20% of the quad
+      if (scanMode !== 'batch3d' && isAutoDocMode && liveQuadRef.current && liveQuadRef.current.headerQuad) {
         try {
           const fullCanvas = document.createElement('canvas');
           fullCanvas.width = vw;
@@ -424,17 +424,17 @@ export default function Scanner({
           const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
           fullCtx.drawImage(video, 0, 0, vw, vh);
 
-          headerCanvas = warpPerspective(fullCanvas, liveQuadRef.current.headerQuad, 400, 110);
+          headerCanvas = warpPerspective(fullCanvas, liveQuadRef.current.headerQuad, 420, 110);
         } catch (e) {}
       }
 
-      // 2. Fallback: Extract from zoomed ROI crop
+      // 2. In Support 3D & default mode: Extract top 20% of the Zoomed ROI (matching the framed card perfectly)
       if (!headerCanvas) {
         const { cropX, cropY, cropW, cropH } = getZoomedCropDimensions(vw, vh, zoom, offsetX, offsetY);
         const headerW = Math.min(vw - cropX - 5, Math.floor(cropW * 0.94));
-        const headerH = Math.min(vh - cropY - 5, Math.floor(cropH * 0.22));
+        const headerH = Math.min(vh - cropY - 5, Math.floor(cropH * 0.20));
         const headerX = Math.min(vw - headerW, Math.floor(cropX + cropW * 0.03));
-        const headerY = Math.min(vh - headerH, Math.floor(cropY + cropH * 0.02));
+        const headerY = Math.min(vh - headerH, Math.floor(cropY + cropH * 0.01));
 
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = headerW;
@@ -467,7 +467,7 @@ export default function Scanner({
       } finally {
         isLiveScanningRef.current = false;
       }
-    }, 1400);
+    }, 1300);
 
     return () => clearInterval(interval);
   }, [hasCamera, cameraError, isProcessing, scanMode, batchStatus, zoom, offsetX, offsetY, isAutoDocMode, getZoomedCropDimensions]);
@@ -884,7 +884,7 @@ export default function Scanner({
           </div>
         )}
 
-        {/* Real-time Ambient Lighting & Auto-Doc Badges */}
+        {/* Real-time Ambient Lighting & Mode Badges */}
         {hasCamera && !cameraError && (
           <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 flex-wrap max-w-[75%]">
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950/85 backdrop-blur-md border border-slate-800/80 shadow-lg text-[10px] sm:text-[11px] font-bold transition-all">
@@ -906,27 +906,29 @@ export default function Scanner({
               )}
             </div>
 
-            <button
-              onClick={() => {
-                const next = !isAutoDocMode;
-                setIsAutoDocMode(next);
-                localStorage.setItem('pokescan_autodoc_mode', String(next));
-              }}
-              title="Mode Scanner de Documents Android : Détection et recadrage automatique 4 coins en direct"
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-xl backdrop-blur-md border shadow-lg text-[10px] sm:text-[11px] font-bold transition-all ${
-                isAutoDocMode
-                  ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/60 shadow-emerald-500/20'
-                  : 'bg-slate-950/85 text-slate-400 border-slate-800 hover:text-slate-200'
-              }`}
-            >
-              <Scan className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Auto-Cadrage {isAutoDocMode ? 'ON' : 'OFF'}</span>
-            </button>
+            {scanMode !== 'batch3d' && (
+              <button
+                onClick={() => {
+                  const next = !isAutoDocMode;
+                  setIsAutoDocMode(next);
+                  localStorage.setItem('pokescan_autodoc_mode', String(next));
+                }}
+                title="Mode Scanner de Documents Android : Détection et recadrage automatique 4 coins en direct"
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl backdrop-blur-md border shadow-lg text-[10px] sm:text-[11px] font-bold transition-all ${
+                  isAutoDocMode
+                    ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/60 shadow-emerald-500/20'
+                    : 'bg-slate-950/85 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Scan className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Auto-Cadrage {isAutoDocMode ? 'ON' : 'OFF'}</span>
+              </button>
+            )}
           </div>
         )}
 
         {/* Interactive Touch Drag Tip (when manual framing) */}
-        {hasCamera && !cameraError && scanMode === 'batch3d' && (!isAutoDocMode || !liveQuad) && (
+        {hasCamera && !cameraError && scanMode === 'batch3d' && (
           <div className="absolute top-3 right-14 z-20 flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/30 text-amber-300 text-[9.5px] font-bold backdrop-blur-md pointer-events-none">
             <span>👆 Glissez pour centrer</span>
           </div>
@@ -1069,8 +1071,8 @@ export default function Scanner({
           </div>
         )}
 
-        {/* REAL-TIME DYNAMIC MAGNETIC QUAD OVERLAY (Android Document Scanner Mode) */}
-        {isAutoDocMode && liveQuad && (
+        {/* REAL-TIME DYNAMIC MAGNETIC QUAD OVERLAY (Only for Free Photo Mode with strictly verified card quad) */}
+        {scanMode !== 'batch3d' && isAutoDocMode && liveQuad && (
           <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
             <svg 
               viewBox="0 0 100 100" 
@@ -1138,8 +1140,8 @@ export default function Scanner({
           </div>
         )}
 
-        {/* 3D Support Calibration HUD Overlay (Fallback / Guide when not locked) */}
-        {(!isAutoDocMode || !liveQuad) && (
+        {/* 3D Support & Standard Calibration HUD Overlay (Clean & Rock-Solid) */}
+        {(scanMode === 'batch3d' || !isAutoDocMode || !liveQuad) && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-4">
             <div 
               className="relative w-full max-w-[270px] sm:max-w-[310px] aspect-[63/88] rounded-2xl border-2 border-dashed flex flex-col justify-between p-3 transition-all duration-300"

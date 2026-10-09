@@ -422,6 +422,36 @@ export default function BorderDetectionCamera() {
     }
   };
 
+  const handleNumberSearch = async (numToSearch = detectedNumber) => {
+    if (!numToSearch || numToSearch.trim().length === 0) return;
+    setIsSearchingAPI(true);
+    try {
+      const targetLocal = numToSearch.split('/')[0].replace(/^0+/, '').trim();
+      const res = await fetch(`https://api.tcgdex.net/v2/fr/cards?localId=${encodeURIComponent(targetLocal)}`);
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list) && list.length > 0) {
+          let matched = null;
+          if (detectedName) {
+            matched = list.find(c => c.name.toLowerCase().includes(detectedName.toLowerCase()) || detectedName.toLowerCase().includes(c.name.toLowerCase()));
+          }
+          const chosen = matched || list[0];
+          const details = await getCardDetails(chosen.id);
+          if (details) {
+            setSelectedCardDetails(details);
+            setDetectedName(details.name);
+            if (details.hp) setDetectedHP(details.hp);
+            setDetectedNumber(details.number);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Erreur recherche par numéro:', e);
+    } finally {
+      setIsSearchingAPI(false);
+    }
+  };
+
   const handleCopyCardInfo = () => {
     const setInfo = selectedCardDetails?.setName ? ` [${selectedCardDetails.setName}]` : '';
     const summary = `${detectedName || 'Pokémon'} ${detectedHP ? `(${detectedHP})` : ''} - N° ${detectedNumber || 'Non renseigné'}${setInfo}`.trim();
@@ -880,7 +910,7 @@ export default function BorderDetectionCamera() {
             </div>
 
             {/* Aperçu Carte Rectangulaire 63:88 */}
-            <div className="w-full max-h-44 aspect-[63/88] rounded-xl overflow-hidden border-2 border-emerald-500 shadow-2xl bg-slate-950 flex items-center justify-center">
+            <div className="w-full max-h-40 aspect-[63/88] rounded-xl overflow-hidden border-2 border-emerald-500 shadow-2xl bg-slate-950 flex items-center justify-center">
               <img
                 src={capturedWarpedImage}
                 alt="Carte extraite HD"
@@ -888,12 +918,84 @@ export default function BorderDetectionCamera() {
               />
             </div>
 
-            {/* 1. Boîtier Nom & PV (En-Tête) */}
+            {/* 1. EN-TÊTE PRIORITAIRE : NUMÉRO DE CARTE & LOUPE HD */}
+            <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border-2 border-emerald-500/60 flex flex-col gap-1.5 shadow-xl">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
+                  <Hash className="w-3.5 h-3.5 text-emerald-400" />
+                  1. Numéro de Carte (Bas Gauche)
+                </span>
+                {detectedNumber ? (
+                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
+                    <CheckCircle2 className="w-3 h-3" /> N° Résolu
+                  </span>
+                ) : !isReadingOCR ? (
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    Non détecté
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {footerCropPreview && (
+                  <div className="w-24 h-8 rounded border border-emerald-500/60 overflow-hidden bg-black flex-shrink-0 flex items-center justify-center shadow-lg relative group">
+                    <img
+                      src={footerCropPreview}
+                      alt="Loupe Zoom N°"
+                      className="w-full h-full object-contain transform scale-110"
+                      title="Loupe haute définition zone numéro"
+                    />
+                    <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none"></div>
+                  </div>
+                )}
+
+                <div className="flex-1 flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={detectedNumber}
+                    onChange={(e) => {
+                      setDetectedNumber(e.target.value);
+                      handleNumberSearch(e.target.value);
+                    }}
+                    placeholder={isReadingOCR ? "Lecture..." : "ex: 050/217"}
+                    className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2 py-1 text-xs font-mono font-bold text-emerald-400 focus:outline-none placeholder-slate-600 transition"
+                  />
+
+                  <button
+                    onClick={() => handleNumberSearch(detectedNumber)}
+                    disabled={isSearchingAPI}
+                    title="Identifier par numéro"
+                    className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition active:scale-95 disabled:opacity-50"
+                  >
+                    <Search className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
+                    onClick={handleCopyCardInfo}
+                    title="Copier les informations"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95"
+                  >
+                    {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+
+                  <button
+                    onClick={() => readAllCardInfo(lastWarpedCanvasRef.current)}
+                    disabled={isReadingOCR || isSearchingAPI}
+                    title="Relancer l'analyse OCR et API"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isReadingOCR || isSearchingAPI ? 'animate-spin text-amber-400' : ''}`} />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. BOÎTIER : NOM & POINTS DE VIE (PV) */}
             <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border border-slate-800 flex flex-col gap-1.5 shadow-inner">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
                   <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  Nom & Points de Vie (PV)
+                  2. Nom & Points de Vie (PV)
                 </span>
                 {isReadingOCR ? (
                   <span className="text-[10px] text-amber-400 flex items-center gap-1 font-mono animate-pulse">
@@ -912,7 +1014,7 @@ export default function BorderDetectionCamera() {
                     <img
                       src={headerCropPreview}
                       alt="Zoom Titre"
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain"
                       title="En-tête de la carte"
                     />
                   </div>
@@ -945,67 +1047,7 @@ export default function BorderDetectionCamera() {
               </div>
             </div>
 
-            {/* 2. Boîtier Numéro de Carte avec Loupe Agrandie */}
-            <div className="w-full bg-slate-950/90 rounded-xl p-2.5 border border-slate-800 flex flex-col gap-1.5 shadow-inner">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Hash className="w-3.5 h-3.5 text-emerald-400" />
-                  Numéro de Carte
-                </span>
-                {detectedNumber ? (
-                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-semibold">
-                    <CheckCircle2 className="w-3 h-3" /> N° Résolu
-                  </span>
-                ) : !isReadingOCR ? (
-                  <span className="text-[10px] text-slate-500 font-mono">
-                    Non détecté
-                  </span>
-                ) : null}
-              </div>
-
-              <div className="flex items-center gap-2">
-                {footerCropPreview && (
-                  <div className="w-24 h-8 rounded border border-emerald-500/60 overflow-hidden bg-black flex-shrink-0 flex items-center justify-center shadow-lg relative group">
-                    <img
-                      src={footerCropPreview}
-                      alt="Loupe Zoom N°"
-                      className="w-full h-full object-cover transform scale-110"
-                      title="Loupe haute définition zone numéro"
-                    />
-                    <div className="absolute inset-0 bg-emerald-500/10 pointer-events-none"></div>
-                  </div>
-                )}
-
-                <div className="flex-1 flex items-center gap-1">
-                  <input
-                    type="text"
-                    value={detectedNumber}
-                    onChange={(e) => setDetectedNumber(e.target.value)}
-                    placeholder={isReadingOCR ? "Lecture..." : "ex: 123/217"}
-                    className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2 py-1 text-xs font-mono font-bold text-emerald-400 focus:outline-none placeholder-slate-600 transition"
-                  />
-
-                  <button
-                    onClick={handleCopyCardInfo}
-                    title="Copier les informations"
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95"
-                  >
-                    {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-
-                  <button
-                    onClick={() => readAllCardInfo(lastWarpedCanvasRef.current)}
-                    disabled={isReadingOCR || isSearchingAPI}
-                    title="Relancer l'analyse OCR et API"
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition active:scale-95 disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isReadingOCR || isSearchingAPI ? 'animate-spin text-amber-400' : ''}`} />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* 3. Informations Extension & Versions Officielles (TCGdex) */}
+            {/* 3. INFORMATIONS EXTENSION & VERSIONS OFFICIELLES (TCGdex) */}
             {selectedCardDetails && (
               <div className="w-full bg-slate-950/80 rounded-xl p-2.5 border border-indigo-500/30 flex flex-col gap-1.5 shadow-inner">
                 <div className="flex items-center justify-between text-[11px]">
